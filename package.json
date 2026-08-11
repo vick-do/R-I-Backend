@@ -1,0 +1,40 @@
+{
+  "name": "ri-api",
+  "version": "1.0.0",
+  "description": "MEST Africa Research & Impact — impact data platform API",
+  "main": "src/app.js",
+  "scripts": {
+    "dev": "nodemon src/app.js",
+    "start": "node src/app.js",
+    "seed": "node src/seeds/seed.js",
+    "backfill": "node src/seeds/backfill.js",
+    "backfill:dry": "node src/seeds/backfill.js --dry-run",
+    "verify": "node scripts/verify-phase1.js && node scripts/verify-phase2.js",
+    "verify:phase1": "node scripts/verify-phase1.js",
+    "verify:phase2": "node scripts/verify-phase2.js",
+    "build": "echo \"No build step required\""
+  },
+  "dependencies": {
+    "bcrypt": "^6.0.0",
+    "cookie-parser": "^1.4.6",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "exceljs": "^4.4.0",
+    "express": "^4.19.2",
+    "express-rate-limit": "^7.3.1",
+    "express-validator": "^7.1.0",
+    "helmet": "^7.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.4.1",
+    "morgan": "^1.10.0",
+    "multer": "^2.1.1",
+    "winston": "^3.13.0"
+  },
+  "devDependencies": {
+    "mongodb-memory-server": "^11.2.0",
+    "nodemon": "^3.1.4"
+  },
+  "overrides": {
+    "uuid": "^11.1.1"
+  }
+}

@@ -1,0 +1,45 @@
+# Dependencies
+node_modules/
+jspm_packages/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Runtime / uploads
+uploads/
+tmp/
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage & test output
+coverage/
+.nyc_output/
+
+# Build output
+dist/
+build/
+
+# Caches
+.cache/
+.npm/
+.eslintcache
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
