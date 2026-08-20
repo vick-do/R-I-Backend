@@ -33,9 +33,22 @@ const env = {
   JWT_REFRESH_EXPIRES_IN: process.env.JWT_REFRESH_EXPIRES_IN,
   BCRYPT_SALT_ROUNDS: parseInt(process.env.BCRYPT_SALT_ROUNDS, 10),
   CORS_ORIGIN: process.env.CORS_ORIGIN,
+  // Where invite links point. Defaults to the dashboard origin, which is the
+  // same host in every deployment so far.
+  APP_URL: process.env.APP_URL ?? process.env.CORS_ORIGIN,
+  INVITE_EXPIRY_DAYS: parseInt(process.env.INVITE_EXPIRY_DAYS ?? '7', 10),
   UPLOAD_MAX_BYTES: parseInt(process.env.UPLOAD_MAX_BYTES ?? '26214400', 10),
   SEED_ADMIN_EMAIL: process.env.SEED_ADMIN_EMAIL,
   SEED_ADMIN_PASSWORD: process.env.SEED_ADMIN_PASSWORD,
+
+  // Google service account used to read connected sheets. Optional: without it
+  // the sheet endpoints report themselves as unconfigured rather than failing
+  // at call time, so the rest of the API runs unchanged on a machine that has
+  // no credentials.
+  GOOGLE_CLIENT_EMAIL: process.env.GOOGLE_CLIENT_EMAIL ?? null,
+  // Stored with literal \n escapes so it survives a single-line .env entry.
+  GOOGLE_PRIVATE_KEY: (process.env.GOOGLE_PRIVATE_KEY ?? '').replace(/\\n/g, '\n') || null,
+
   isProduction: process.env.NODE_ENV === 'production',
 };
 

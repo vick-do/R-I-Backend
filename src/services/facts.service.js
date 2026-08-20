@@ -91,8 +91,25 @@ async function writeFactAudited(params, req) {
       entityType: 'Fact',
       entityId: fact._id,
       actor: params.user,
-      after: { value: fact.value, periodLabel: fact.periodLabel, dimensionKey: fact.dimensionKey },
-      summary: `${outcome === 'created' ? 'Recorded' : 'Revised'} ${fact.periodLabel} → ${fact.value}`,
+      after: {
+        value: fact.value,
+        periodLabel: fact.periodLabel,
+        dimensionKey: fact.dimensionKey,
+        metric: params.metric?.label ?? params.metric?.key ?? null,
+        program: params.program?.name ?? null,
+      },
+      // Names the coordinate, not just the number: the audit log is read by
+      // someone asking "who changed Grow's learner count", and "Recorded All
+      // time → 92" cannot answer that.
+      summary: [
+        outcome === 'created' ? 'Recorded' : 'Revised',
+        params.metric?.label ?? params.metric?.key,
+        params.program?.name ? `for ${params.program.name}` : null,
+        `(${fact.periodLabel}${fact.dimensionKey ? `, ${fact.dimensionKey}` : ''})`,
+        `→ ${fact.value}`,
+      ]
+        .filter(Boolean)
+        .join(' '),
       req,
     });
   }
@@ -299,7 +316,7 @@ async function resolveTotalCore({ programIds, metric, periodType, year, from, to
 }
 
 /**
- * The Overview's headline figures.
+ * One figure per programme for each metric, combined into an organisation total.
  *
  * Each programme contributes exactly one number per metric: its recorded total
  * when it has one, otherwise the sum of its finest breakdown. Taking one figure
@@ -307,25 +324,22 @@ async function resolveTotalCore({ programIds, metric, periodType, year, from, to
  * a programme and never mixed across one.
  *
  * This is why Web3 counts. It records only a gender split (26 + 12) with no
- * standalone total; the previous implementation matched on signature `[]` only
- * and silently dropped those 38 learners from the organisation figure.
+ * standalone total; matching on signature `[]` only would silently drop those
+ * 38 learners from the organisation figure.
  *
- * Metrics with `headlineOrder` are returned in that order and are always
- * present, even with no data — "not yet measured" and "zero" are different
- * statements and the Overview must not conflate them.
+ * Returns a Map keyed by metric id, each entry carrying the combined `total`
+ * and the per-programme `contributions` behind it. The contributions are what
+ * let a caller rank programmes without running the reduction a second time and
+ * risking a different answer — see `insights.service.js`.
  */
-async function orgTotals({ year, from, to, headlineOnly = true } = {}) {
-  const metricFilter = { isArchived: false };
-  if (headlineOnly) metricFilter.headlineOrder = { $ne: null };
-  else metricFilter.rollsUpToOrgTotal = true;
-
-  const metrics = await Metric.find(metricFilter).sort({ headlineOrder: 1, category: 1, key: 1 });
-  if (metrics.length === 0) return [];
-
-  const programs = await Program.find({ isReportable: true, isArchived: false }).select('_id name').lean();
+async function orgFigures({ metrics, year, from, to }) {
+  const programs = await Program.find({ isReportable: true, isArchived: false })
+    .select('_id name pageKey')
+    .lean();
   const programIds = programs.map((p) => p._id);
+  const programById = new Map(programs.map((p) => [String(p._id), p]));
 
-  // One pass over every headline metric across every reportable programme.
+  // One pass over every requested metric across every reportable programme.
   const rows = await Fact.aggregate([
     {
       $match: {
@@ -344,7 +358,9 @@ async function orgTotals({ year, from, to, headlineOnly = true } = {}) {
     },
   ]);
 
-  return metrics.map((metric) => {
+  const out = new Map();
+
+  for (const metric of metrics) {
     const forMetric = rows.filter((r) => String(r._id.metric) === String(metric._id));
 
     // Bucket by programme, then choose one figure per programme.
@@ -358,26 +374,71 @@ async function orgTotals({ year, from, to, headlineOnly = true } = {}) {
     const contributions = [];
     let anyDerived = false;
 
-    for (const buckets of byProgram.values()) {
+    for (const [programId, buckets] of byProgram) {
+      const program = programById.get(programId);
       const recorded = buckets.find((b) => (b._id.signature ?? []).length === 0);
+
       if (recorded) {
-        contributions.push(metric.aggregation === 'avg' ? recorded.avg : recorded.sum);
+        contributions.push({
+          programId,
+          pageKey: program?.pageKey ?? null,
+          name: program?.name ?? '',
+          value: metric.aggregation === 'avg' ? recorded.avg : recorded.sum,
+          basis: 'recorded_total',
+          derivedFrom: null,
+        });
         continue;
       }
+
       // No recorded total: sum the breakdown with the fewest dimensions.
       const finestLength = Math.min(...buckets.map((b) => (b._id.signature ?? []).length));
       const finest = buckets.filter((b) => (b._id.signature ?? []).length === finestLength);
       const values = finest.map((b) => (metric.aggregation === 'avg' ? b.avg : b.sum));
       const combined = values.reduce((sum, v) => sum + v, 0);
-      contributions.push(metric.aggregation === 'avg' ? combined / values.length : combined);
+
+      contributions.push({
+        programId,
+        pageKey: program?.pageKey ?? null,
+        name: program?.name ?? '',
+        value: metric.aggregation === 'avg' ? combined / values.length : combined,
+        basis: 'derived_from_breakdown',
+        derivedFrom: finest[0]?._id.signature ?? [],
+      });
       anyDerived = true;
     }
 
-    const value = contributions.length
+    const values = contributions.map((c) => c.value);
+    const total = values.length
       ? metric.aggregation === 'avg'
-        ? contributions.reduce((s, v) => s + v, 0) / contributions.length
-        : contributions.reduce((s, v) => s + v, 0)
+        ? values.reduce((s, v) => s + v, 0) / values.length
+        : values.reduce((s, v) => s + v, 0)
       : null;
+
+    out.set(String(metric._id), { metric, total, contributions, anyDerived });
+  }
+
+  return out;
+}
+
+/**
+ * The Overview's headline figures.
+ *
+ * Metrics with `headlineOrder` are returned in that order and are always
+ * present, even with no data — "not yet measured" and "zero" are different
+ * statements and the Overview must not conflate them.
+ */
+async function orgTotals({ year, from, to, headlineOnly = true } = {}) {
+  const metricFilter = { isArchived: false };
+  if (headlineOnly) metricFilter.headlineOrder = { $ne: null };
+  else metricFilter.rollsUpToOrgTotal = true;
+
+  const metrics = await Metric.find(metricFilter).sort({ headlineOrder: 1, category: 1, key: 1 });
+  if (metrics.length === 0) return [];
+
+  const figures = await orgFigures({ metrics, year, from, to });
+
+  return metrics.map((metric) => {
+    const figure = figures.get(String(metric._id));
 
     return {
       key: metric.key,
@@ -385,9 +446,9 @@ async function orgTotals({ year, from, to, headlineOnly = true } = {}) {
       metricLabel: metric.label,
       description: metric.description ?? null,
       unit: metric.unit,
-      value,
-      programCount: contributions.length,
-      basis: value === null ? 'no_data' : anyDerived ? 'partly_derived' : 'recorded_total',
+      value: figure.total,
+      programCount: figure.contributions.length,
+      basis: figure.total === null ? 'no_data' : figure.anyDerived ? 'partly_derived' : 'recorded_total',
     };
   });
 }
@@ -565,7 +626,10 @@ module.exports = {
   writeFact,
   writeFactAudited,
   aggregate,
+  aggregateCore,
   resolveTotal,
+  resolveTotalCore,
+  orgFigures,
   orgTotals,
   programSummary,
   availableYears,

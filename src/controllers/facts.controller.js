@@ -3,6 +3,7 @@ const Metric = require('../models/Metric.model');
 const Dimension = require('../models/Dimension.model');
 const Fact = require('../models/Fact.model');
 const facts = require('../services/facts.service');
+const submissions = require('../services/submissions.service');
 const { sendSuccess, sendError, ERROR_CODES } = require('../utils/response');
 const { buildPeriod } = require('../utils/period');
 const { dimensionKey, normalizeDimensions, slugifyName } = require('../utils/dimensions');
@@ -175,6 +176,17 @@ async function createFact(req, res, next) {
       return;
     }
 
+    // A scoped editor may only write the programmes and metrics assigned to
+    // them. Checked here rather than in middleware because the programme and
+    // metric have already been resolved.
+    if (!req.user.canWrite({ programId: program._id, metricKey: metric.key })) {
+      sendError(res, 403, {
+        code: ERROR_CODES.FORBIDDEN,
+        message: `You do not have permission to record ${metric.label} for ${program.name}.`,
+      });
+      return;
+    }
+
     // Resolve each breakdown against the catalog. Open dimensions (cohort, hub,
     // region, sector) accept new values and grow; closed ones reject unknowns
     // with the list of what is valid.
@@ -222,11 +234,30 @@ async function createFact(req, res, next) {
       if (resolved.created) addedValues.push(`${resolved.label} (${dimension.label})`);
     }
 
+    const period = buildPeriod({ periodType, year, month, quarter });
+
+    // An editor proposes; an approver or admin publishes. The coordinate has
+    // already been resolved and validated at this point, so both paths agree on
+    // exactly what is being written.
+    if (!submissions.publishesDirectly(req.user)) {
+      const submission = await submissions.submit(
+        { program, metric, period, dimensions: normalized, value, note, user: req.user },
+        req
+      );
+
+      sendSuccess(res, 201, {
+        data: { submission, outcome: 'submitted', addedValues },
+        message:
+          `Submitted for approval.${addedValues.length ? ` Added ${addedValues.join(', ')} to the catalog.` : ''}`,
+      });
+      return;
+    }
+
     const { fact, outcome } = await facts.writeFactAudited(
       {
         program,
         metric,
-        period: buildPeriod({ periodType, year, month, quarter }),
+        period,
         dimensions: normalized,
         value,
         source: 'manual',

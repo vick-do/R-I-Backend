@@ -13,6 +13,10 @@ const { sendError, ERROR_CODES } = require('./utils/response');
 
 const authRoutes = require('./routes/auth.routes');
 const factsRoutes = require('./routes/facts.routes');
+const insightsRoutes = require('./routes/insights.routes');
+const sheetsRoutes = require('./routes/sheets.routes');
+const auditRoutes = require('./routes/audit.routes');
+const submissionRoutes = require('./routes/submissions.routes');
 const { programRouter, metricRouter, dimensionRouter } = require('./routes/catalog.routes');
 const { importRouter, templateRouter } = require('./routes/import.routes');
 
@@ -45,6 +49,10 @@ app.use('/api/v1/programs', programRouter);
 app.use('/api/v1/metrics', metricRouter);
 app.use('/api/v1/dimensions', dimensionRouter);
 app.use('/api/v1/facts', factsRoutes);
+app.use('/api/v1/insights', insightsRoutes);
+app.use('/api/v1/sheets', sheetsRoutes);
+app.use('/api/v1/audit', auditRoutes);
+app.use('/api/v1/submissions', submissionRoutes);
 app.use('/api/v1/imports', importRouter);
 app.use('/api/v1/mapping-templates', templateRouter);
 

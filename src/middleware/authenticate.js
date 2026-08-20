@@ -44,8 +44,10 @@ function requireRole(...roles) {
 }
 
 /** Data entry, imports, and catalog edits. Viewers are read-only. */
-const requireEditor = requireRole('admin', 'editor');
+const requireEditor = requireRole('admin', 'approver', 'editor');
+/** Publishing figures and connecting sources. */
+const requireApprover = requireRole('admin', 'approver');
 /** User management and destructive operations such as batch rollback. */
 const requireAdmin = requireRole('admin');
 
-module.exports = { authenticate, requireRole, requireEditor, requireAdmin };
+module.exports = { authenticate, requireRole, requireEditor, requireApprover, requireAdmin };

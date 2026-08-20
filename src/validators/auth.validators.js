@@ -15,10 +15,13 @@ const createUserValidation = [
   body('lastName').isString().trim().notEmpty().withMessage('Last name is required.'),
   body('email').isEmail().withMessage('A valid email is required.').normalizeEmail(),
   body('password')
+    .optional()
     .isString()
     .isLength({ min: 10 })
     .withMessage('Password must be at least 10 characters.'),
   body('role').isIn(User.ROLES).withMessage(`Role must be one of: ${User.ROLES.join(', ')}.`),
+  body('scopes.programs').optional().isArray(),
+  body('scopes.metrics').optional().isArray(),
 ];
 
 const updateUserValidation = [
@@ -28,6 +31,21 @@ const updateUserValidation = [
   body('isActive').optional().isBoolean(),
   body('password').optional().isString().isLength({ min: 10 })
     .withMessage('Password must be at least 10 characters.'),
+  body('scopes.programs').optional().isArray(),
+  body('scopes.metrics').optional().isArray(),
 ];
 
-module.exports = { loginValidation, refreshValidation, createUserValidation, updateUserValidation };
+const acceptInviteValidation = [
+  body('password')
+    .isString()
+    .isLength({ min: 10 })
+    .withMessage('Choose a password of at least 10 characters.'),
+];
+
+module.exports = {
+  loginValidation,
+  refreshValidation,
+  createUserValidation,
+  updateUserValidation,
+  acceptInviteValidation,
+};

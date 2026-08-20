@@ -13,5 +13,7 @@ module.exports = {
   Fact: require('./Fact.model'),
   ImportBatch: require('./ImportBatch.model'),
   MappingTemplate: require('./MappingTemplate.model'),
+  SheetSource: require('./SheetSource.model'),
+  FactSubmission: require('./FactSubmission.model'),
   AuditLog: require('./AuditLog.model'),
 };

@@ -9,10 +9,15 @@
     "seed": "node src/seeds/seed.js",
     "backfill": "node src/seeds/backfill.js",
     "backfill:dry": "node src/seeds/backfill.js --dry-run",
-    "verify": "node scripts/verify-phase1.js && node scripts/verify-phase2.js",
+    "verify": "node scripts/verify-phase1.js && node scripts/verify-phase2.js && node scripts/verify-phase5.js && node scripts/verify-phase6.js && node scripts/verify-phase7.js && node scripts/verify-phase8.js",
     "verify:phase1": "node scripts/verify-phase1.js",
     "verify:phase2": "node scripts/verify-phase2.js",
-    "build": "echo \"No build step required\""
+    "verify:phase5": "node scripts/verify-phase5.js",
+    "build": "echo \"No build step required\"",
+    "verify:phase6": "node scripts/verify-phase6.js",
+    "sync:sheets": "node scripts/sync-sheets.js",
+    "verify:phase7": "node scripts/verify-phase7.js",
+    "verify:phase8": "node scripts/verify-phase8.js"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",
