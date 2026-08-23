@@ -1,6 +1,7 @@
 const insights = require('../services/insights.service');
 const dataQuality = require('../services/dataQuality.service');
-const { sendSuccess } = require('../utils/response');
+const Program = require('../models/Program.model');
+const { sendSuccess, sendError, ERROR_CODES } = require('../utils/response');
 
 /** GET /api/v1/insights/scorecard — headline figures with change and a series. */
 async function getScorecard(req, res, next) {
@@ -52,4 +53,24 @@ async function getDataQuality(req, res, next) {
   }
 }
 
-module.exports = { getScorecard, getCompare, getFunnel, getDataQuality };
+/** GET /api/v1/insights/by-year — one metric across years, for one programme. */
+async function getByYear(req, res, next) {
+  try {
+    const program = await Program.findOne({ pageKey: req.query.program });
+    if (!program) {
+      sendError(res, 404, { code: ERROR_CODES.NOT_FOUND, message: 'Program not found.' });
+      return;
+    }
+
+    const result = await insights.byYear({
+      programId: program._id,
+      metricKey: req.query.metric,
+      includeDescendants: !program.isReportable,
+    });
+    sendSuccess(res, 200, { data: result });
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = { getScorecard, getCompare, getFunnel, getDataQuality, getByYear };

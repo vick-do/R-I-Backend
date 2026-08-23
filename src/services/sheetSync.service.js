@@ -51,11 +51,59 @@ function assess(planResult, source) {
 }
 
 /**
+ * Plans every block on a tab against one read of the sheet, and merges the
+ * results into a single plan.
+ *
+ * Blocks describe disjoint coordinates, so concatenating their candidates is
+ * safe — and merging before assessing means one bad block holds the whole tab
+ * rather than half of it landing.
+ */
+async function planBlocks({ worksheet, source, fileName }) {
+  const blocks =
+    source.blocks?.length > 0
+      ? source.blocks
+      : [{ name: source.tabName, program: source.program, mapping: source.mapping }];
+
+  const merged = {
+    candidates: [],
+    checks: [],
+    issues: [],
+    diff: { created: [], updated: [], unchanged: [], conflicts: [] },
+  };
+
+  for (const block of blocks) {
+    const programId = block.program?._id ?? block.program;
+    const result = await imports.plan({ worksheet, mapping: block.mapping, fileName, programId });
+
+    merged.candidates.push(...result.candidates);
+    merged.checks.push(...result.checks.map((c) => ({ ...c, label: `${block.name ?? ''} — ${c.label}`.trim() })));
+    merged.issues.push(...result.issues);
+    for (const key of ['created', 'updated', 'unchanged', 'conflicts']) {
+      merged.diff[key].push(...result.diff[key]);
+    }
+  }
+
+  merged.summary = {
+    created: merged.diff.created.length,
+    updated: merged.diff.updated.length,
+    unchanged: merged.diff.unchanged.length,
+    conflicts: merged.diff.conflicts.length,
+    errors: merged.issues.filter((i) => i.severity === 'error').length,
+    checksFailed: merged.checks.filter((c) => c.status === 'fail').length,
+    blocks: blocks.length,
+  };
+
+  return merged;
+}
+
+/**
  * Runs one source. Always writes an ImportBatch, whether or not it commits, so
  * a sync that stopped for review is as inspectable as one that went through.
  */
 async function syncSource(sourceId, { user = null, force = false } = {}) {
-  const source = await SheetSource.findById(sourceId).populate('program', 'pageKey name');
+  const source = await SheetSource.findById(sourceId)
+    .populate('program', 'pageKey name')
+    .populate('blocks.program', 'pageKey name');
   if (!source) throw Object.assign(new Error('Sheet source not found.'), { status: 404 });
 
   const fileName = `${source.spreadsheetTitle || 'Google Sheet'} (live)`;
@@ -66,12 +114,7 @@ async function syncSource(sourceId, { user = null, force = false } = {}) {
       spreadsheetId: source.spreadsheetId,
       tabName: source.tabName,
     });
-    planResult = await imports.plan({
-      worksheet,
-      mapping: source.mapping,
-      fileName,
-      programId: source.program._id,
-    });
+    planResult = await planBlocks({ worksheet, source, fileName });
   } catch (err) {
     source.lastSyncedAt = new Date();
     source.lastStatus = 'failed';
@@ -210,4 +253,4 @@ async function dryRun({ spreadsheetId, tabName, programId, mapping }) {
   };
 }
 
-module.exports = { assess, syncSource, syncAll, inspectTab, dryRun };
+module.exports = { assess, planBlocks, syncSource, syncAll, inspectTab, dryRun };

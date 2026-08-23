@@ -72,7 +72,7 @@ async function main() {
 
   const programCount = await Program.countDocuments();
   const metricCount = await Metric.countDocuments();
-  check(`Seeded ${programCount} programmes covering the whole nav tree`, programCount === 25, `got ${programCount}`);
+  check(`Seeded ${programCount} programmes covering the whole nav tree`, programCount === 27, `got ${programCount}`);
   check(`Seeded ${metricCount} metrics`, metricCount === 23, `got ${metricCount}`);
 
   const headline = await Metric.find({ headlineOrder: { $ne: null } }).sort({ headlineOrder: 1 });

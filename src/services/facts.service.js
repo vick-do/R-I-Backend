@@ -316,6 +316,50 @@ async function resolveTotalCore({ programIds, metric, periodType, year, from, to
 }
 
 /**
+ * Collapses the period axis inside one bucket.
+ *
+ * A programme may hold BOTH an all-time figure and periodic ones for the same
+ * metric and breakdown — Grow records its gender split all-time and again for
+ * each year. Adding those together double-counts in exactly the way mixing
+ * dimension signatures does: it reported 1,202 women against a programme of
+ * 793 people.
+ *
+ * So the all-time reading wins wherever it exists, and periodic figures are
+ * summed only when it does not. Callers that pin a year never reach this —
+ * their match already restricts the period.
+ *
+ * `bucketOf` names the group within which the rule applies; `rowKey` names one
+ * coordinate inside it.
+ */
+function collapsePeriods(rows, bucketOf, rowKey) {
+  const hasAllTime = new Set();
+  for (const row of rows) {
+    if (row._id.periodType === 'all_time') hasAllTime.add(bucketOf(row));
+  }
+
+  const merged = new Map();
+  for (const row of rows) {
+    const bucket = bucketOf(row);
+    if (hasAllTime.has(bucket) && row._id.periodType !== 'all_time') continue;
+
+    const key = `${bucket}::${rowKey(row)}`;
+    const existing = merged.get(key);
+
+    if (!existing) {
+      merged.set(key, { ...row, _id: { ...row._id } });
+      continue;
+    }
+
+    const count = existing.count + row.count;
+    existing.avg = (existing.avg * existing.count + row.avg * row.count) / count;
+    existing.sum += row.sum;
+    existing.count = count;
+  }
+
+  return [...merged.values()];
+}
+
+/**
  * One figure per programme for each metric, combined into an organisation total.
  *
  * Each programme contributes exactly one number per metric: its recorded total
@@ -340,7 +384,7 @@ async function orgFigures({ metrics, year, from, to }) {
   const programById = new Map(programs.map((p) => [String(p._id), p]));
 
   // One pass over every requested metric across every reportable programme.
-  const rows = await Fact.aggregate([
+  const rawRows = await Fact.aggregate([
     {
       $match: {
         isCurrent: true,
@@ -351,12 +395,24 @@ async function orgFigures({ metrics, year, from, to }) {
     },
     {
       $group: {
-        _id: { metric: '$metric', program: '$program', signature: '$dimensionSignature' },
+        _id: {
+          metric: '$metric',
+          program: '$program',
+          signature: '$dimensionSignature',
+          periodType: '$periodType',
+        },
         sum: { $sum: '$value' },
         avg: { $avg: '$value' },
+        count: { $sum: 1 },
       },
     },
   ]);
+
+  const rows = collapsePeriods(
+    rawRows,
+    (r) => `${r._id.metric}::${r._id.program}::${signatureKey(r._id.signature ?? [])}`,
+    () => ''
+  );
 
   const out = new Map();
 
@@ -472,12 +528,17 @@ async function programSummary({ programId, includeDescendants = false, year }) {
   // as it does in `aggregateCore` — while collapsing what was ~60 sequential
   // round trips (one per metric per breakdown) into two. On a hosted database
   // that is the difference between a 4-second page and a fast one.
-  const [combined, monthly] = await Promise.all([
+  const [rawCombined, monthly] = await Promise.all([
     Fact.aggregate([
       { $match: baseMatch },
       {
         $group: {
-          _id: { metric: '$metric', signature: '$dimensionSignature', dimensions: '$dimensions' },
+          _id: {
+            metric: '$metric',
+            signature: '$dimensionSignature',
+            dimensions: '$dimensions',
+            periodType: '$periodType',
+          },
           sum: { $sum: '$value' },
           avg: { $avg: '$value' },
           count: { $sum: 1 },
@@ -503,6 +564,12 @@ async function programSummary({ programId, includeDescendants = false, year }) {
       { $sort: { '_id.periodStart': 1 } },
     ]),
   ]);
+
+  const combined = collapsePeriods(
+    rawCombined,
+    (r) => `${r._id.metric}::${signatureKey(r._id.signature ?? [])}`,
+    (r) => JSON.stringify(r._id.dimensions ?? {})
+  );
 
   if (combined.length === 0) return { metrics: [] };
 
@@ -538,9 +605,16 @@ async function programSummary({ programId, includeDescendants = false, year }) {
       const monthlyBuckets = bucket(monthly, metric._id);
 
       const totalBucket = buckets.get('');
-      const singleDimension = [...buckets.values()]
-        .filter((b) => b.signature.length === 1)
-        .sort((a, b) => a.signature[0].localeCompare(b.signature[0]));
+
+      // One and two-dimension breakdowns are both shown. Restricting this to a
+      // single dimension hid most of what Grow records: its cohorts only ever
+      // exist paired with a hub, so a cohort breakdown has signature
+      // [cohort, hub] and was dropped entirely.
+      const shownBreakdowns = [...buckets.values()]
+        .filter((b) => b.signature.length >= 1 && b.signature.length <= 2)
+        .sort((a, b) => a.signature.length - b.signature.length || a.signature.join().localeCompare(b.signature.join()));
+
+      const singleDimension = shownBreakdowns.filter((b) => b.signature.length === 1);
 
       // Same precedence as resolveTotal: a recorded total wins; otherwise sum
       // the finest breakdown and say so.
@@ -574,8 +648,9 @@ async function programSummary({ programId, includeDescendants = false, year }) {
         total,
         basis,
         derivedFrom,
-        breakdowns: singleDimension.map((b) => ({
+        breakdowns: shownBreakdowns.map((b) => ({
           dimension: b.signature[0],
+          dimensions: b.signature,
           rows: b.rows.map((r) => toRow(r, metric)).sort((a, x) => x.value - a.value),
         })),
         trend: trendBucket

@@ -36,6 +36,14 @@ const programs = [
     metricKeys: ['learners_total', 'graduates', 'graduation_rate'] },
   { pageKey: 'digital-skills-grow', name: 'Grow', parent: 'digital-skills', category: 'digital_skills',
     metricKeys: ['learners_total', 'mothers', 'graduates_employed'] },
+  // Cohort-based training programmes with the same shape as the three above:
+  // a roster of participants, a gender split, and employment outcomes.
+  { pageKey: 'digital-skills-hospitality', name: 'Hospitality', parent: 'digital-skills', category: 'digital_skills',
+    metricKeys: ['learners_total', 'graduates_employed'],
+    description: 'Hospitality and tourism training. Figures are counted from the applicant roster, which states no totals of its own.' },
+  { pageKey: 'digital-skills-doulogic', name: 'Doulogic', parent: 'digital-skills', category: 'digital_skills',
+    metricKeys: ['learners_total'],
+    description: 'Doulogic cohort. The roster and the tally block in the source sheet disagree — see Data quality.' },
 
   { pageKey: 'venture-support', name: 'Venture Support', parent: 'mest-x', category: 'container', isReportable: false },
   { pageKey: 'venture-support-early-stage', name: 'Early stage', parent: 'venture-support', category: 'container', isReportable: false },
@@ -43,7 +51,7 @@ const programs = [
     metricKeys: ['enterprises_total'] },
   { pageKey: 'venture-support-pre-mest', name: 'Pre Mest', parent: 'venture-support-early-stage', category: 'venture_support',
     metricKeys: ['enterprises_total'] },
-  { pageKey: 'venture-support-undp', name: 'UNDP', parent: 'venture-support-early-stage', category: 'venture_support',
+  { pageKey: 'venture-support-undp', name: 'UNDP-YAI', parent: 'venture-support-early-stage', category: 'venture_support',
     metricKeys: ['enterprises_total'] },
   { pageKey: 'venture-support-absa', name: 'Absa partnership program', parent: 'venture-support-early-stage', category: 'venture_support',
     metricKeys: ['enterprises_total'] },
@@ -117,7 +125,7 @@ const metrics = [
     key: 'enterprises_total', displayOrder: 60, label: 'Enterprises supported', category: 'enterprise',
     unit: 'count', aggregation: 'sum', rollsUpToOrgTotal: true,
     headlineOrder: 2, headlineLabel: 'Total no. of businesses supported',
-    allowedDimensions: ['gender', 'enterprise_stage', 'region', 'sector'],
+    allowedDimensions: ['gender', 'enterprise_stage', 'region', 'district', 'sector'],
     aliases: ['Total Enterprises', 'Enterprises', 'Businesses supported'],
   },
 
@@ -267,11 +275,28 @@ const dimensions = [
     ],
   },
   {
+    // Every region of Ghana, each aliased to the "X Region" spelling the
+    // partner sheets use — without which "Greater Accra Region" becomes a
+    // second value sitting beside "Greater Accra".
     name: 'region', label: 'Region',
     values: [
-      { value: 'greater-accra', label: 'Greater Accra', aliases: ['GreaterAccra'], order: 1 },
-      { value: 'ashanti', label: 'Ashanti', order: 2 },
-      { value: 'northern', label: 'Northern', order: 3 },
+      { value: 'greater-accra', label: 'Greater Accra', aliases: ['Greater Accra Region', 'GreaterAccra'], order: 1 },
+      { value: 'ashanti', label: 'Ashanti', aliases: ['Ashanti Region'], order: 2 },
+      { value: 'central', label: 'Central', aliases: ['Central Region'], order: 3 },
+      { value: 'western', label: 'Western', aliases: ['Western Region'], order: 4 },
+      { value: 'western-north', label: 'Western North', aliases: ['Western North Region'], order: 5 },
+      { value: 'eastern', label: 'Eastern', aliases: ['Eastern Region'], order: 6 },
+      { value: 'volta', label: 'Volta', aliases: ['Volta Region'], order: 7 },
+      { value: 'oti', label: 'Oti', aliases: ['Oti Region'], order: 8 },
+      { value: 'bono', label: 'Bono', aliases: ['Bono Region'], order: 9 },
+      { value: 'bono-east', label: 'Bono East', aliases: ['Bono East Region'], order: 10 },
+      { value: 'ahafo', label: 'Ahafo', aliases: ['Ahafo Region'], order: 11 },
+      { value: 'northern', label: 'Northern', aliases: ['Northern Region'], order: 12 },
+      { value: 'north-east', label: 'North East', aliases: ['North East Region'], order: 13 },
+      { value: 'savannah', label: 'Savannah', aliases: ['Savannah Region'], order: 14 },
+      { value: 'upper-east', label: 'Upper East', aliases: ['Upper East Region'], order: 15 },
+      { value: 'upper-west', label: 'Upper West', aliases: ['Upper West Region'], order: 16 },
+      { value: 'other', label: 'Other / outside Ghana', aliases: ['Other / Non-Ghana / Unclassified', 'Online', 'Remote'], order: 90 },
       { value: 'unknown', label: 'Information not available', aliases: ['Information Not Available'], order: 99 },
     ],
   },
@@ -288,6 +313,9 @@ const dimensions = [
       { value: 'manufacturing', label: 'Manufacturing', order: 8 },
       { value: 'other', label: 'Other', order: 99 },
     ],
+  },
+  {
+    name: 'district', label: 'District', values: [],
   },
   {
     name: 'enterprise_stage', label: 'Enterprise stage', isClosed: true,

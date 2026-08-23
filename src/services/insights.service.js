@@ -1,7 +1,7 @@
 const Metric = require('../models/Metric.model');
 const Program = require('../models/Program.model');
 const Fact = require('../models/Fact.model');
-const { orgFigures, periodFilter } = require('./facts.service');
+const { orgFigures, periodFilter, resolveTotalCore, resolveProgramIds } = require('./facts.service');
 const { signatureKey, slugifyName } = require('../utils/dimensions');
 
 /**
@@ -236,4 +236,32 @@ async function funnel({ year, from, to } = {}) {
   return { stages };
 }
 
-module.exports = { scorecard, compare, funnel, yearsWithData };
+/**
+ * One metric across whole years for one programme.
+ *
+ * Each year is resolved the same way the programme page resolves its headline
+ * — a recorded total when there is one, otherwise the finest complete
+ * breakdown — so the columns and the figure above them can never disagree.
+ */
+async function byYear({ programId, metricKey, includeDescendants = false }) {
+  const metric = await Metric.findOne({ key: metricKey, isArchived: false });
+  if (!metric) throw notFound(`Unknown metric "${metricKey}".`);
+
+  const programIds = await resolveProgramIds(programId, { includeDescendants });
+
+  const rows = await Fact.aggregate([
+    { $match: { isCurrent: true, metric: metric._id, program: { $in: programIds }, year: { $ne: null } } },
+    { $group: { _id: '$year' } },
+    { $sort: { _id: 1 } },
+  ]);
+
+  const points = [];
+  for (const { _id: year } of rows) {
+    const resolved = await resolveTotalCore({ programIds, metric, year });
+    if (resolved.total !== null) points.push({ year, value: resolved.total, basis: resolved.basis });
+  }
+
+  return { metric: { key: metric.key, label: metric.label, unit: metric.unit }, points };
+}
+
+module.exports = { scorecard, compare, funnel, byYear, yearsWithData };

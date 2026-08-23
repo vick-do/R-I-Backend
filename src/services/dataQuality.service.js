@@ -178,7 +178,9 @@ async function failedReconciliations() {
         severity: 'warning',
         programPageKey: batch.program?.pageKey ?? null,
         programName: batch.program?.name ?? '',
-        title: `${check.label} does not reconcile`,
+        title: batch.program?.name
+          ? `${batch.program.name}: ${check.label} does not reconcile`
+          : `${check.label} does not reconcile`,
         detail: `The source states ${check.expected}, its rows sum to ${check.actual} — a difference of ${check.difference}.`,
         sourceRef: check.sourceRef ?? batch.fileName,
         committedAt: batch.committedAt,

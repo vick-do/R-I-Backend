@@ -105,7 +105,12 @@ async function extract({ worksheet, mapping, fileName, programId }) {
       )
     : {};
 
-  if (mapping.layout === 'crosstab') {
+  if (mapping.layout === 'roster') {
+    await extractRoster({
+      worksheet, mapping, fileName, programId, metricIndex, dimensionIndex,
+      fixedDimensions, candidates, statedTotals, issues,
+    });
+  } else if (mapping.layout === 'crosstab') {
     await extractCrosstab({
       worksheet, mapping, fileName, programId, metricIndex, dimensionIndex,
       fixedDimensions, candidates, statedTotals, issues,
@@ -117,7 +122,112 @@ async function extract({ worksheet, mapping, fileName, programId }) {
     });
   }
 
+  // A tally the sheet states about itself, wherever it sits — Absa's total is
+  // in C79, seven rows below the last district. Handled here so every layout
+  // can use it rather than only the roster reader.
+  for (const cell of mapping.statedTotalCells ?? []) {
+    const stated = readNumber(worksheet.getCell(cell));
+    if (stated === null) continue;
+    const metric = metricIndex.get(normalizeLabel(mapping.statedTotalMetric ?? mapping.metric ?? ''))
+      ?? candidates[0]?.metric;
+    if (!metric) continue;
+
+    statedTotals.push({
+      metric,
+      dimensions: { ...fixedDimensions },
+      period: candidates[0]?.period ?? buildPeriod(mapping.defaultPeriod ?? { periodType: 'all_time' }),
+      value: stated,
+      sourceRef: sourceRef(fileName, worksheet.name, cell),
+    });
+  }
+
   return { candidates, statedTotals, issues };
+}
+
+/**
+ * One row per person, counted rather than read.
+ *
+ * The other layouts read figures a sheet already states. A roster states none —
+ * the Hospitality tab is 145 applicants with no tally anywhere — so the figure
+ * only exists once the rows are counted. A row counts when its identity column
+ * holds something, which is what separates a participant from a spacer or a
+ * stray note beneath the table.
+ *
+ * A block emits exactly one dimension signature: either the overall count, or
+ * the count per value of one dimension. Emitting both would hand `reconcile`
+ * the same people twice, since it sums every candidate for a metric and period
+ * regardless of how they are broken down.
+ */
+async function extractRoster({
+  worksheet, mapping, fileName, programId, metricIndex, dimensionIndex,
+  fixedDimensions, candidates, statedTotals, issues,
+}) {
+  const metric = metricIndex.get(normalizeLabel(mapping.metric));
+  if (!metric) {
+    issues.push({ severity: 'error', message: `No metric matches "${mapping.metric}".` });
+    return;
+  }
+
+  const identityCol = mapping.identityColumn;
+  if (!identityCol) {
+    issues.push({ severity: 'error', message: 'A roster mapping needs an identity column.' });
+    return;
+  }
+
+  const firstRow = mapping.firstDataRow ?? (mapping.headerRow ?? 1) + 1;
+  const lastRow = mapping.lastDataRow ?? worksheet.rowCount;
+  const period = buildPeriod(mapping.defaultPeriod ?? { periodType: 'all_time' });
+  const groupBy = mapping.groupBy ?? null;
+  const dimension = groupBy ? dimensionIndex.get(groupBy.target) : null;
+
+  let counted = 0;
+  let unlabelled = 0;
+  const groups = new Map();
+
+  for (let row = firstRow; row <= lastRow; row += 1) {
+    if (!readText(worksheet.getCell(`${identityCol}${row}`))) continue;
+    counted += 1;
+    if (!groupBy) continue;
+
+    const raw = readText(worksheet.getCell(`${groupBy.column}${row}`));
+    if (!raw) {
+      unlabelled += 1;
+      continue;
+    }
+
+    const ref = sourceRef(fileName, worksheet.name, `${groupBy.column}${row}`);
+    const value = await resolveDimensionValue(dimension, raw, issues, ref);
+    if (!value) {
+      unlabelled += 1;
+      continue;
+    }
+    groups.set(value, (groups.get(value) ?? 0) + 1);
+  }
+
+  const ref = sourceRef(fileName, worksheet.name, `${identityCol}${firstRow}:${identityCol}${lastRow}`);
+
+  if (!groupBy) {
+    if (counted > 0) {
+      candidates.push({ programId, metric, period, dimensions: { ...fixedDimensions }, value: counted, sourceRef: ref });
+    }
+  } else {
+    for (const [value, count] of groups) {
+      candidates.push({
+        programId, metric, period,
+        dimensions: { ...fixedDimensions, [groupBy.target]: value },
+        value: count,
+        sourceRef: sourceRef(fileName, worksheet.name, `${groupBy.column} (${value})`),
+      });
+    }
+    if (unlabelled > 0) {
+      issues.push({
+        severity: 'warning',
+        message: `${unlabelled} of ${counted} rows have no ${groupBy.target} recorded, so they are absent from that breakdown.`,
+        sourceRef: ref,
+      });
+    }
+  }
+
 }
 
 /** One observation per row: each column is a metric, a dimension, or the period. */
@@ -145,6 +255,12 @@ async function extractLong({
   const dimensionRules = rules.filter((r) => r.role === 'dimension');
   const periodRule = rules.find((r) => r.role === 'period');
 
+  // A label written once above a run of rows — the Absa sheet names each region
+  // on the first of its districts and leaves the rest blank. Carried down, so
+  // the run is attributed rather than skipped as unlabelled.
+  const carried = new Map();
+  const localCandidates = [];
+
   for (let row = firstDataRow; row <= lastDataRow; row += 1) {
     const rowDimensions = { ...fixedDimensions };
     let skipRow = false;
@@ -154,7 +270,13 @@ async function extractLong({
     let missingDimension = false;
 
     for (const rule of dimensionRules) {
-      const raw = rule.fixedValue ?? readText(worksheet.getCell(`${rule.column}${row}`));
+      let raw = rule.fixedValue ?? readText(worksheet.getCell(`${rule.column}${row}`));
+
+      if (rule.fillDown) {
+        if (raw) carried.set(rule.target, raw);
+        else raw = carried.get(rule.target) ?? '';
+      }
+
       if (!raw) {
         missingDimension = true;
         continue;
@@ -201,10 +323,44 @@ async function extractLong({
       if (skipRow) {
         statedTotals.push({ metric, dimensions: rowDimensions, period, value: scaled, sourceRef: ref });
       } else {
-        candidates.push({ programId, metric, period, dimensions: rowDimensions, value: scaled, sourceRef: ref });
+        localCandidates.push({ programId, metric, period, dimensions: rowDimensions, value: scaled, sourceRef: ref });
       }
     }
   }
+
+  /**
+   * Several rows can legitimately land on one coordinate — twenty-nine Greater
+   * Accra districts are all "region = greater-accra". Without this they collide
+   * and the plan reports them as the same figure claimed twice.
+   *
+   * Only opt-in: elsewhere a repeated coordinate really is a source error, and
+   * silently adding those together is how a total quietly doubles.
+   */
+  if (mapping.aggregate === 'sum') {
+    const merged = new Map();
+    for (const candidate of localCandidates) {
+      const key = [
+        String(candidate.metric._id),
+        candidate.period.periodType,
+        candidate.period.periodStart?.toISOString() ?? 'null',
+        buildDimensionFields(candidate.dimensions).dimensionKey,
+      ].join('::');
+
+      const existing = merged.get(key);
+      if (existing) {
+        existing.value += candidate.value;
+        existing.rows += 1;
+      } else {
+        merged.set(key, { ...candidate, rows: 1 });
+      }
+    }
+    for (const c of merged.values()) {
+      candidates.push({ ...c, sourceRef: `${c.sourceRef} (+${c.rows - 1} more)`.replace(' (+0 more)', '') });
+    }
+    return;
+  }
+
+  candidates.push(...localCandidates);
 }
 
 /**

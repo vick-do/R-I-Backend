@@ -15,13 +15,37 @@ const sheetSourceSchema = new mongoose.Schema(
   {
     spreadsheetId: { type: String, required: true, trim: true },
     spreadsheetTitle: { type: String, trim: true, default: '' },
-    tabName: { type: String, required: true, trim: true },
+    // Not trimmed: a tab name can legitimately carry a trailing space, and
+    // "MEST Scale & Express " in this very spreadsheet does. Trimming it makes
+    // the range unresolvable.
+    tabName: { type: String, required: true },
 
     program: { type: mongoose.Schema.Types.ObjectId, ref: 'Program', required: true, index: true },
     mappingTemplate: { type: mongoose.Schema.Types.ObjectId, ref: 'MappingTemplate', default: null },
     // Frozen copy of the mapping, so a sync stays explainable after the
     // template it came from is edited.
     mapping: { type: mongoose.Schema.Types.Mixed, default: {} },
+
+    /**
+     * One tab often stacks several unrelated tables — Grow holds a hub
+     * breakdown, a gender split, mothers, and employment in one sheet. Each is
+     * its own block with its own mapping and its own programme, and a sync runs
+     * all of them into a single reversible batch.
+     *
+     * Empty means the tab is one table, described by `mapping` and `program`
+     * above.
+     */
+    blocks: {
+      type: [
+        {
+          _id: false,
+          name: { type: String, trim: true },
+          program: { type: mongoose.Schema.Types.ObjectId, ref: 'Program' },
+          mapping: { type: mongoose.Schema.Types.Mixed, default: {} },
+        },
+      ],
+      default: [],
+    },
 
     isEnabled: { type: Boolean, default: true },
 

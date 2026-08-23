@@ -13,6 +13,13 @@
 
 process.env.MONGOMS_VERSION = process.env.MONGOMS_VERSION ?? '6.0.14';
 
+// Set before anything loads dotenv. These assert the no-credentials path, and
+// dotenv skips a key already present in the environment — so an empty string
+// here keeps the run deterministic on a machine that does have a service
+// account configured in .env.
+process.env.GOOGLE_CLIENT_EMAIL = '';
+process.env.GOOGLE_PRIVATE_KEY = '';
+
 const { MongoMemoryServer } = require('mongodb-memory-server');
 
 let passed = 0;
