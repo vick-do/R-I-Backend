@@ -40,6 +40,9 @@ async function seedPrograms() {
       metricKeys: spec.metricKeys ?? [],
       description: spec.description ?? null,
       isReportable: spec.isReportable ?? true,
+      // Carried through so a programme retired in the catalog stays retired,
+      // rather than reappearing on the next seed.
+      isArchived: spec.isArchived ?? false,
     };
 
     const existing = await Program.findOne({ pageKey: spec.pageKey });

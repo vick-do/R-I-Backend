@@ -78,6 +78,7 @@ async function main() {
 
   const grow = await Program.findOne({ pageKey: 'digital-skills-grow' });
   const preMest = await Program.findOne({ pageKey: 'digital-skills-pre-mest' });
+  const edtech = await Program.findOne({ pageKey: 'ecosystem-edtech-mondays' });
   const learners = await Metric.findOne({ key: 'learners_total' });
 
   // ------------------------------------------------------------- the adapter
@@ -148,6 +149,50 @@ async function main() {
     JSON.stringify(planResult.checks[0]));
   check('Provenance names the sheet, not a file path',
     planResult.candidates[0].sourceRef.includes('Grow'), planResult.candidates[0].sourceRef);
+
+  // ------------------------------------------- a total that spans the periods
+  //
+  // The EdTech Mondays season sheets state one total per platform at the end of
+  // a row of months. Two things about that shape used to defeat reconciliation:
+  // the total sits on no month, so a month-by-month comparison found nothing to
+  // compare it with; and every platform's total was checked against every
+  // platform's figures added together. All 35 checks failed on a sheet whose
+  // arithmetic was in fact exact.
+  section('Row totals across a period axis');
+
+  const season = sheets.toWorksheet({
+    name: 'EdTech Mondays',
+    values: [
+      ['', '', '', 'Feb', 'Mar', 'Total'],
+      ['', '', 'Posts', 6, 8, 14],
+    ],
+  });
+
+  const seasonPlan = async (channel, platform) => imports.plan({
+    worksheet: season,
+    fileName: 'Data Summary (live)',
+    programId: edtech._id,
+    mapping: {
+      layout: 'crosstab',
+      fixedDimensions: { channel, platform },
+      crosstab: {
+        headerRow: 1, labelColumn: 'C', firstDataRow: 2, lastDataRow: 2,
+        firstDataColumn: 'D', lastDataColumn: 'F',
+        headerRole: 'period', defaultYear: 2023,
+      },
+    },
+  });
+
+  const facebook = await seasonPlan('mest-africa', 'facebook');
+  check('Two months planned, the total column excluded',
+    facebook.candidates.length === 2, String(facebook.candidates.length));
+  check('The stated 14 reconciles against Feb + Mar',
+    facebook.checks[0]?.status === 'pass' && facebook.checks[0]?.actual === 14,
+    JSON.stringify(facebook.checks[0]));
+  check('The check says it spans every period rather than naming one month',
+    /all periods/.test(facebook.checks[0]?.label ?? ''), facebook.checks[0]?.label);
+  check('And it names the platform the total belongs to',
+    /facebook/.test(facebook.checks[0]?.label ?? ''), facebook.checks[0]?.label);
 
   // --------------------------------------------------------- the safety gate
   section('Auto-commit gate');

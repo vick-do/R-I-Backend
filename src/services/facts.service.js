@@ -232,6 +232,7 @@ async function aggregateCore({
       key: metric.key,
       label: metric.label,
       unit: metric.unit,
+      currency: metric.currency ?? null,
       aggregation: metric.aggregation,
     },
     groupBy: [...normalizedGroupBy].sort(),
@@ -446,19 +447,26 @@ async function orgFigures({ metrics, year, from, to }) {
         continue;
       }
 
-      // No recorded total: sum the breakdown with the fewest dimensions.
+      // No recorded total: sum ONE breakdown — the one with the fewest
+      // dimensions. Several may tie for fewest, and they are alternative views
+      // of the same programme rather than parts of it: UNDP-YAI reports its
+      // 1,372 jobs by hub, by gender and by programme stage, and Absa reports
+      // its 190 enterprises by region and again by district. Adding the tied
+      // breakdowns together counts the same people once per view — it was
+      // reporting 4,116 UNDP jobs and 380 Absa enterprises. One is chosen, and
+      // `derivedFrom` names which, so the Overview can say so.
       const finestLength = Math.min(...buckets.map((b) => (b._id.signature ?? []).length));
-      const finest = buckets.filter((b) => (b._id.signature ?? []).length === finestLength);
-      const values = finest.map((b) => (metric.aggregation === 'avg' ? b.avg : b.sum));
-      const combined = values.reduce((sum, v) => sum + v, 0);
+      const finest = buckets
+        .filter((b) => (b._id.signature ?? []).length === finestLength)
+        .sort((x, y) => signatureKey(x._id.signature ?? []).localeCompare(signatureKey(y._id.signature ?? [])))[0];
 
       contributions.push({
         programId,
         pageKey: program?.pageKey ?? null,
         name: program?.name ?? '',
-        value: metric.aggregation === 'avg' ? combined / values.length : combined,
+        value: metric.aggregation === 'avg' ? finest.avg : finest.sum,
         basis: 'derived_from_breakdown',
-        derivedFrom: finest[0]?._id.signature ?? [],
+        derivedFrom: finest._id.signature ?? [],
       });
       anyDerived = true;
     }
@@ -502,6 +510,7 @@ async function orgTotals({ year, from, to, headlineOnly = true } = {}) {
       metricLabel: metric.label,
       description: metric.description ?? null,
       unit: metric.unit,
+      currency: metric.currency ?? null,
       value: figure.total,
       programCount: figure.contributions.length,
       basis: figure.total === null ? 'no_data' : figure.anyDerived ? 'partly_derived' : 'recorded_total',
@@ -643,6 +652,7 @@ async function programSummary({ programId, includeDescendants = false, year }) {
         key: metric.key,
         label: metric.label,
         unit: metric.unit,
+        currency: metric.currency ?? null,
         aggregation: metric.aggregation,
         category: metric.category,
         total,

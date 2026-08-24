@@ -91,7 +91,8 @@ async function main() {
   // Deliberately mirrors the real data's awkward shapes:
   //   Grow     — a recorded programme total AND a hub breakdown of the same size
   //   Pre-Mest — a recorded total only
-  //   Web3     — a gender split and NO total, so its figure must be derived
+  //   Web3     — a gender split AND a hub split of the same 38 people, with no
+  //              recorded total, so its figure must be derived from ONE of them
   section('Fixture');
 
   await write({ program: grow, metric: learners, period: { periodType: 'all_time' }, value: 793 });
@@ -103,9 +104,14 @@ async function main() {
 
   await write({ program: web3, metric: learners, period: { periodType: 'all_time' }, dimensions: { gender: 'male' }, value: 26 });
   await write({ program: web3, metric: learners, period: { periodType: 'all_time' }, dimensions: { gender: 'female' }, value: 12 });
+  // The same 38 people again, on a second axis. UNDP-YAI reports its 1,372 jobs
+  // three ways like this and Absa its 190 enterprises twice; the two splits are
+  // alternative views of one programme, never parts of it.
+  await write({ program: web3, metric: learners, period: { periodType: 'all_time' }, dimensions: { hub: 'accra' }, value: 30 });
+  await write({ program: web3, metric: learners, period: { periodType: 'all_time' }, dimensions: { hub: 'plugin' }, value: 8 });
 
   check('Grow holds a total and a hub breakdown of equal size', true);
-  check('Web3 holds only a gender split', true);
+  check('Web3 holds two tied splits of the same 38 people and no total', true);
 
   // ------------------------------------------------------------- comparison
   section('Compare across programmes');
@@ -127,7 +133,7 @@ async function main() {
     `${rows[0].name} ${rows[0].value}`);
 
   const web3Row = rows.find((r) => r.name === 'Web3');
-  check('Web3 is counted at 38, summed from its gender split', web3Row && web3Row.value === 38,
+  check('Web3 is counted at 38 — one split, not both added together', web3Row && web3Row.value === 38,
     web3Row ? String(web3Row.value) : 'missing');
   check('Web3 is labelled as derived, not recorded', web3Row?.basis === 'derived_from_breakdown', web3Row?.basis);
   check('Grow is labelled as recorded', rows[0].basis === 'recorded_total', rows[0].basis);
@@ -140,6 +146,15 @@ async function main() {
   const orgLearners = orgTotals.body.data.totals.find((t) => t.key === 'learners_total');
   check('Comparison agrees with the Overview figure', orgLearners.value === total,
     `${orgLearners.value} vs ${total}`);
+  // The Overview reduces programmes itself rather than going through compare,
+  // so it needs its own tie-breaking. Without it the two Web3 splits were both
+  // summed and the headline read 1,630.
+  check('The Overview counts Web3 once across its two tied splits', orgLearners.value === 1592,
+    `got ${orgLearners.value}`);
+  check('The Overview still counts three contributing programmes', orgLearners.programCount === 3,
+    `got ${orgLearners.programCount}`);
+  check('Compare names the single split it derived Web3 from', web3Row?.derivedFrom?.length === 1,
+    JSON.stringify(web3Row?.derivedFrom));
 
   // ------------------------------------------------------- grouped compare
   section('Compare grouped by a dimension');

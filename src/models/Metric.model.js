@@ -18,6 +18,10 @@ const metricSchema = new mongoose.Schema(
     label: { type: String, required: true, trim: true },
     description: { type: String, trim: true, default: null },
     unit: { type: String, enum: UNITS, default: 'count' },
+    // Which currency a `currency` metric is denominated in. The sheets report in
+    // both — UNDP-YAI's revenue in dollars, the EdTech Fellowship's in cedis —
+    // and a figure shown under the wrong symbol is simply a wrong figure.
+    currency: { type: String, trim: true, uppercase: true, default: 'USD' },
     aggregation: { type: String, enum: AGGREGATIONS, default: 'sum' },
     category: {
       type: String,

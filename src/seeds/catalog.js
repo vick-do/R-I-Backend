@@ -50,17 +50,20 @@ const programs = [
   { pageKey: 'venture-support-usl', name: 'USL', parent: 'venture-support-early-stage', category: 'venture_support',
     metricKeys: ['enterprises_total'] },
   { pageKey: 'venture-support-pre-mest', name: 'Pre Mest', parent: 'venture-support-early-stage', category: 'venture_support',
-    metricKeys: ['enterprises_total'] },
+    metricKeys: ['enterprises_total'], isArchived: true },
   { pageKey: 'venture-support-undp', name: 'UNDP-YAI', parent: 'venture-support-early-stage', category: 'venture_support',
     metricKeys: ['enterprises_total'] },
   { pageKey: 'venture-support-absa', name: 'Absa partnership program', parent: 'venture-support-early-stage', category: 'venture_support',
     metricKeys: ['enterprises_total'] },
-  { pageKey: 'venture-support-grow-stage', name: 'Grow stage', parent: 'venture-support', category: 'container', isReportable: false },
+  { pageKey: 'venture-support-grow-stage', name: 'Growth stage', parent: 'venture-support', category: 'container', isReportable: false },
   { pageKey: 'venture-support-edtech-fellowship', name: 'EdTech fellowship', parent: 'venture-support-grow-stage', category: 'venture_support',
     metricKeys: ['enterprises_total'] },
-  { pageKey: 'venture-support-mest-scale', name: 'Mest scale', parent: 'venture-support-grow-stage', category: 'venture_support',
-    metricKeys: ['enterprises_total'],
-    description: 'MEST Scale & Express — enterprise support by stage, sector, and region.' },
+  { pageKey: 'venture-support-mest-scale', name: 'MEST Scale', parent: 'venture-support-grow-stage', category: 'venture_support',
+    metricKeys: ['enterprises_total', 'jobs_created'],
+    description: 'The 24 enterprises in the MEST Scale cohort, counted from the partner roster.' },
+  { pageKey: 'venture-support-mest-express', name: 'MEST Express', parent: 'venture-support-grow-stage', category: 'venture_support',
+    metricKeys: ['enterprises_total', 'jobs_created'],
+    description: 'The 88 enterprises in the MEST Express cohort. Four later transitioned into MEST Scale and appear in both rosters.' },
 
   { pageKey: 'ecosystem', name: 'Ecosystem', parent: 'mest-x', category: 'container', isReportable: false },
   { pageKey: 'ecosystem-edtech-mondays', name: 'EdTech Mondays', parent: 'ecosystem', category: 'ecosystem',
@@ -125,8 +128,9 @@ const metrics = [
     key: 'enterprises_total', displayOrder: 60, label: 'Enterprises supported', category: 'enterprise',
     unit: 'count', aggregation: 'sum', rollsUpToOrgTotal: true,
     headlineOrder: 2, headlineLabel: 'Total no. of businesses supported',
-    allowedDimensions: ['gender', 'enterprise_stage', 'region', 'district', 'sector'],
-    aliases: ['Total Enterprises', 'Enterprises', 'Businesses supported'],
+    allowedDimensions: ['gender', 'enterprise_stage', 'region', 'district', 'sector',
+      'hub', 'cohort', 'venture_stage', 'venture_status', 'program_stage', 'open_source'],
+    aliases: ['Total Enterprises', 'Enterprises', 'Businesses supported', 'Total Startups', 'Total startups', 'Total Companies'],
   },
 
   // ---- Investment ---------------------------------------------------------
@@ -134,8 +138,8 @@ const metrics = [
     key: 'jobs_created', displayOrder: 90, label: 'Jobs created', category: 'investment',
     unit: 'count', aggregation: 'sum', rollsUpToOrgTotal: true,
     headlineOrder: 3, headlineLabel: 'Total jobs created',
-    allowedDimensions: ['gender', 'region', 'sector'],
-    aliases: ['Jobs created', 'Total jobs created'],
+    allowedDimensions: ['gender', 'region', 'sector', 'hub', 'cohort', 'program_stage'],
+    aliases: ['Jobs created', 'Total jobs created', 'SUM of Total Jobs', 'Total Number of Youth in Work Reported'],
   },
   {
     key: 'edtech_learners_impacted', displayOrder: 95, label: 'Learners reached by EdTech solutions',
@@ -143,12 +147,12 @@ const metrics = [
     headlineOrder: 4, headlineLabel: 'Learners impacted with EdTech solutions',
     description:
       'End learners reached by EdTech products built or supported by MEST ventures. Distinct from people trained — these are the users of the solutions, not participants in a programme.',
-    allowedDimensions: ['region', 'gender'],
-    aliases: ['Learners impacted', 'EdTech learners', 'Learners reached'],
+    allowedDimensions: ['region', 'gender', 'cohort'],
+    aliases: ['Learners impacted', 'EdTech learners', 'Learners reached', 'Total Number of learners'],
   },
   {
     key: 'amount_invested', displayOrder: 80, label: 'Amount invested', category: 'investment',
-    unit: 'currency', aggregation: 'sum', rollsUpToOrgTotal: true,
+    unit: 'currency', aggregation: 'sum', currency: 'USD', rollsUpToOrgTotal: true,
     headlineOrder: 5, headlineLabel: 'Amount invested',
     allowedDimensions: ['sector', 'region'],
     aliases: ['Amount invested', 'Capital deployed', 'Investment'],
@@ -170,6 +174,55 @@ const metrics = [
       'Share of accelerated ventures meeting their growth milestone. DEFINITION TO CONFIRM — the previous dashboard quoted "82% growth" in one place and "88% graduation rate" in another for the same named figure.',
     allowedDimensions: ['sector', 'enterprise_stage'],
     aliases: ['Venture Acceleration Impact', 'Graduation rate'],
+  },
+
+  {
+    key: 'educators_trained', displayOrder: 96, label: 'Educators trained', category: 'people',
+    unit: 'count', aggregation: 'sum',
+    description: 'Teachers and trainers taken through an EdTech programme, as distinct from the learners they go on to reach.',
+    allowedDimensions: ['gender', 'region', 'cohort'],
+    aliases: ['Educators (teachers) trained', 'Educators trained'],
+  },
+  {
+    key: 'users_reached', displayOrder: 97, label: 'Users and customers reached', category: 'people',
+    unit: 'count', aggregation: 'sum',
+    description: 'End users of the products these ventures build. A reach figure reported by the ventures themselves, not a count MEST verified.',
+    allowedDimensions: ['gender', 'region', 'cohort'],
+    aliases: ['Total Number of users', 'Total Users/Customers', 'Total number of users'],
+  },
+  {
+    key: 'institutions_reached', displayOrder: 99, label: 'Institutions reached', category: 'other',
+    unit: 'count', aggregation: 'sum',
+    description: 'Schools and other learning institutions using a solution built by a supported venture.',
+    allowedDimensions: ['region'],
+    aliases: ['Learning institutions using EdTech solutions/Number of schools (secondary, post-secondary) engaged'],
+  },
+  {
+    key: 'employees_hired', displayOrder: 100, label: 'Employees hired', category: 'enterprise',
+    unit: 'count', aggregation: 'sum',
+    description: 'People employed by the supported ventures. Distinct from jobs created, which the partner sheets report against the venture rather than the hire.',
+    allowedDimensions: ['gender', 'employment_type', 'cohort'],
+    aliases: ['Employees hired', 'Employees Count'],
+  },
+  {
+    key: 'partnerships', displayOrder: 101, label: 'Partnerships formed', category: 'other',
+    unit: 'count', aggregation: 'sum',
+    allowedDimensions: ['region', 'cohort'],
+    aliases: ['Partnerships formed', 'Partnerships'],
+  },
+  {
+    key: 'revenue', displayOrder: 102, label: 'Revenue reported', category: 'investment',
+    unit: 'currency', aggregation: 'sum', currency: 'USD',
+    description: 'Revenue the supported ventures report to date. Self-reported and unaudited.',
+    allowedDimensions: ['hub', 'sector', 'region', 'program_stage', 'cohort'],
+    aliases: ['SUM of Total Revenue', 'Total Revenue', 'Revenue'],
+  },
+  {
+    key: 'monthly_revenue', displayOrder: 103, label: 'Monthly revenue', category: 'investment',
+    unit: 'currency', aggregation: 'sum', currency: 'GHS',
+    description: 'Reported monthly revenue. Kept apart from total revenue so a run rate is never added to a cumulative figure.',
+    allowedDimensions: ['hub', 'sector', 'cohort'],
+    aliases: ['Monthly revenue (GHS)'],
   },
 
   // ---- Social / EdTech Mondays -------------------------------------------
@@ -206,7 +259,7 @@ const metrics = [
   {
     key: 'shares', displayOrder: 180, label: 'Shares', category: 'social', unit: 'count', aggregation: 'sum',
     allowedDimensions: SOCIAL_DIMS,
-    aliases: ['Total Shares', 'Shares'],
+    aliases: ['Total Shares', 'Shares', 'Reposts'],
   },
   {
     key: 'clicks', displayOrder: 190, label: 'Clicks', category: 'social', unit: 'count', aggregation: 'sum',
@@ -256,6 +309,19 @@ const dimensions = [
         'Womans Haven (Digital Marketting)',
       ], order: 3 },
       { value: 'plugin', label: 'Plugin', aliases: ['Plugin'], order: 4 },
+      // The nine implementing hubs of the UNDP Youth Alliance Initiative. They
+      // sit on the same axis as the Grow hubs because both answer the same
+      // question — where the work happened — and no figure is ever recorded
+      // against one from each set.
+      { value: 'afridelf', label: 'AFRIDELF', order: 10 },
+      { value: 'agrico-hub', label: 'Agrico Hub', order: 11 },
+      { value: 'behive', label: 'Behive', order: 12 },
+      { value: 'fab-hub-ashanti', label: 'Fab Hub Ashanti', order: 13 },
+      { value: 'green-growth-africa', label: 'Green Growth Africa', order: 14 },
+      { value: 'innovators-up', label: 'Innovators Up', order: 15 },
+      { value: 'mest', label: 'MEST', order: 16 },
+      { value: 'siasd', label: 'SIASD', order: 17 },
+      { value: 'wan-hive', label: 'Wan-Hive', order: 18 },
     ],
   },
   {
@@ -303,15 +369,26 @@ const dimensions = [
   {
     name: 'sector', label: 'Sector',
     values: [
-      { value: 'finance', label: 'Finance / Financial Services', aliases: ['Finance / Financial Services'], order: 1 },
-      { value: 'digital-economy', label: 'Digital Economy', order: 2 },
-      { value: 'agriculture', label: 'Agriculture', order: 3 },
-      { value: 'health', label: 'Health', order: 4 },
-      { value: 'education-skills', label: 'Education & Skills', aliases: ['Education & Skills'], order: 5 },
+      { value: 'finance', label: 'Finance / Financial Services', aliases: ['Finance / Financial Services', 'Finance & Fintech'], order: 1 },
+      { value: 'digital-economy', label: 'Digital Economy', aliases: ['Technology & Digital Solutions'], order: 2 },
+      { value: 'agriculture', label: 'Agriculture', aliases: ['Agriculture & Food Systems'], order: 3 },
+      { value: 'health', label: 'Health', aliases: ['Health & Nutrition'], order: 4 },
+      { value: 'education-skills', label: 'Education & Skills', aliases: ['Education & Skills', 'Education', 'Skills, Employment & Human Capital'], order: 5 },
       { value: 'tourism-hospitality', label: 'Tourism & Hospitality', aliases: ['Tourism & Hospitality'], order: 6 },
       { value: 'enterprise-development', label: 'Enterprise / Business Development', aliases: ['Enterprise/Business Development'], order: 7 },
       { value: 'manufacturing', label: 'Manufacturing', order: 8 },
-      { value: 'other', label: 'Other', order: 99 },
+      // USL names its sectors more finely than the MEST partner sheets do.
+      // Where the two mean the same thing the USL spelling is an alias, so a
+      // sector chart spanning both programmes adds up; where USL covers ground
+      // the MEST list has no word for, it becomes a value of its own.
+      { value: 'wash', label: 'WASH (Water, Sanitation & Hygiene)', aliases: ['WASH (Water, Sanitation & Hygiene)', 'WASH'], order: 9 },
+      { value: 'climate-energy', label: 'Climate Action & Renewable Energy', aliases: ['Climate Action & Renewable Energy'], order: 10 },
+      { value: 'waste-circular-economy', label: 'Waste Management & Circular Economy', aliases: ['Waste Management & Circular Economy'], order: 11 },
+      { value: 'social-protection', label: 'Social Protection & Civic Engagement', aliases: ['Social Protection & Civic Engagement'], order: 12 },
+      { value: 'assistive-technology', label: 'Assistive Technology & Inclusion', aliases: ['Assistive Technology & Inclusion'], order: 13 },
+      { value: 'ecommerce-logistics', label: 'E-commerce, Logistics & Retail', aliases: ['E-commerce, Logistics & Retail'], order: 14 },
+      { value: 'other', label: 'Other', order: 90 },
+      { value: 'unknown', label: 'Information not available', aliases: ['Information Not Available'], order: 99 },
     ],
   },
   {
@@ -322,6 +399,51 @@ const dimensions = [
     values: [
       { value: 'small', label: 'Small', order: 1 },
       { value: 'medium', label: 'Medium', order: 2 },
+    ],
+  },
+  {
+    // How far a venture's product has got. Deliberately separate from
+    // `enterprise_stage`, which records how large the business is — a Small
+    // enterprise can be Scaling and a Medium one still Piloting, so folding the
+    // two into one axis would produce a chart that reads as a sequence and is
+    // not one.
+    name: 'venture_stage', label: 'Product stage',
+    values: [
+      { value: 'scaling', label: 'Scaling', order: 1 },
+      { value: 'piloting', label: 'Piloting', order: 2 },
+      { value: 'mvp', label: 'MVP', order: 3 },
+      { value: 'prototype', label: 'Prototype', order: 4 },
+      { value: 'unknown', label: 'Not recorded', aliases: ['N/A'], order: 99 },
+    ],
+  },
+  {
+    name: 'venture_status', label: 'Status',
+    values: [
+      { value: 'active', label: 'Active', order: 1 },
+      { value: 'inactive', label: 'Inactive', order: 2 },
+      { value: 'unknown', label: 'Not recorded', aliases: ['N/A'], order: 99 },
+    ],
+  },
+  {
+    // UNDP-YAI reports against a compound label that pairs the programme stage
+    // with the cohort inside it ("2 Pilot", "1 Cohort 2"). Kept verbatim rather
+    // than split, because the sheet never states the two parts separately and
+    // inventing the split would put figures on an axis the source does not have.
+    name: 'program_stage', label: 'Programme stage', values: [],
+  },
+  {
+    name: 'open_source', label: 'Open source', isClosed: true,
+    values: [
+      { value: 'yes', label: 'Open source', aliases: ['Yes'], order: 1 },
+      { value: 'no', label: 'Proprietary', aliases: ['No'], order: 2 },
+      { value: 'unknown', label: 'Not recorded', aliases: ['N/A'], order: 99 },
+    ],
+  },
+  {
+    name: 'employment_type', label: 'Employment type', isClosed: true,
+    values: [
+      { value: 'full-time', label: 'Full time', aliases: ['Full time', 'Fulltime'], order: 1 },
+      { value: 'part-time', label: 'Part time', aliases: ['Part time', 'Parttime'], order: 2 },
     ],
   },
   {

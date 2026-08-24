@@ -510,7 +510,11 @@ async function extractCrosstab({
       } else if (header.kind === 'dimension') {
         dimensions[header.name] = header.value;
       } else if (header.kind === 'total') {
-        statedTotals.push({ metric, dimensions, period: fallbackPeriod, value: scaled, sourceRef: ref });
+        // A total at the end of a period axis restates the row across every
+        // month in it, so it is reconciled against all of them rather than
+        // against the block's fallback period alone.
+        const spansPeriods = [...headers.values()].some((h) => h.kind === 'period');
+        statedTotals.push({ metric, dimensions, period: fallbackPeriod, value: scaled, sourceRef: ref, spansPeriods });
         continue;
       }
 
@@ -599,14 +603,33 @@ function summarise(candidate, dimFields) {
 /**
  * Checks each total the spreadsheet states against the sum of the leaf facts
  * we are importing. Stated totals are never stored — this is what they are for.
+ *
+ * A total is only compared against the rows it actually claims to cover:
+ *
+ *   · If it carries dimensions of its own — the EdTech Mondays sheet states one
+ *     total per channel and platform — only candidates sharing those values
+ *     count. Without this, MEST Facebook's 48 posts would be checked against
+ *     every platform's posts added together and could never pass.
+ *   · A total sitting at the end of a period axis restates the whole row rather
+ *     than any one month, so it is summed across periods. Compared month by
+ *     month it would find nothing, because no month is labelled "Total".
+ *
+ * A total with no dimensions still matches every candidate, which is what the
+ * single-figure sheets rely on.
  */
 function reconcile(candidates, statedTotals) {
   return statedTotals.map((stated) => {
+    const covers = (c) =>
+      Object.entries(stated.dimensions ?? {}).every(([name, value]) => c.dimensions?.[name] === value);
+    const samePeriod = (c) =>
+      c.period.periodType === stated.period.periodType &&
+      (c.period.periodStart?.getTime() ?? null) === (stated.period.periodStart?.getTime() ?? null);
+
     const siblings = candidates.filter(
       (c) =>
         String(c.metric._id) === String(stated.metric._id) &&
-        c.period.periodType === stated.period.periodType &&
-        (c.period.periodStart?.getTime() ?? null) === (stated.period.periodStart?.getTime() ?? null)
+        covers(c) &&
+        (stated.spansPeriods || samePeriod(c))
     );
 
     const actual = siblings.reduce((sum, c) => sum + c.value, 0);
@@ -615,7 +638,11 @@ function reconcile(candidates, statedTotals) {
     const status = Math.abs(difference) < 0.005 ? 'pass' : 'fail';
 
     return {
-      label: `${stated.metric.label} — ${stated.period.periodLabel}`,
+      label: [
+        stated.metric.label,
+        ...Object.values(stated.dimensions ?? {}),
+        stated.spansPeriods ? 'all periods' : stated.period.periodLabel,
+      ].join(' — '),
       expected: stated.value,
       actual,
       difference,
