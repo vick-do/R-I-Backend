@@ -16,6 +16,7 @@ const Metric = require('../models/Metric.model');
 const Dimension = require('../models/Dimension.model');
 const User = require('../models/User.model');
 const { programs, metrics, dimensions } = require('./catalog');
+const catalogCache = require('../services/catalog.cache');
 
 async function seedPrograms() {
   const byKey = new Map();
@@ -151,4 +152,18 @@ if (require.main === module) {
   });
 }
 
-module.exports = { run, seedPrograms, seedMetrics, seedDimensions, seedAdmin };
+// Seeding rewrites the catalog wholesale, so nothing may keep a copy of what
+// it looked like before.
+const withInvalidation = (fn) => async (...args) => {
+  const result = await fn(...args);
+  catalogCache.invalidate();
+  return result;
+};
+
+module.exports = {
+  run,
+  seedPrograms: withInvalidation(seedPrograms),
+  seedMetrics: withInvalidation(seedMetrics),
+  seedDimensions: withInvalidation(seedDimensions),
+  seedAdmin,
+};

@@ -5,6 +5,8 @@ const { readText, readNumber, columnLetter, columnIndex, sourceRef } = require('
 const { parsePeriodLabel, buildPeriod, yearFromText } = require('../utils/period');
 const { buildDimensionFields, slugify } = require('../utils/dimensions');
 const facts = require('./facts.service');
+const catalogCache = require('./catalog.cache');
+const { invalidate: invalidateFigures } = require('../utils/memo');
 
 /**
  * Spreadsheet import.
@@ -63,6 +65,9 @@ async function resolveDimensionValue(dimension, raw, issues, ref) {
   }
 
   if (resolved.created) {
+    // The importer just widened the catalog, so anything holding a copy of it
+    // is now behind.
+    catalogCache.invalidate('dimensions');
     issues.push({
       severity: 'info',
       message: `Added "${resolved.label}" as a new ${dimension.label}.`,
@@ -86,14 +91,28 @@ function scaleValue(value, metric, percentScale) {
 }
 
 /**
+ * Loads the metric and dimension catalog once, for a caller about to read
+ * several blocks off one sheet.
+ *
+ * `extract` fetches both itself when it is handed nothing, which is right for a
+ * single block. A tab with ten of them was fetching the same two collections
+ * twenty times over — the dominant cost of a sync that reads a live sheet, and
+ * one paid on a background refresh every few minutes.
+ */
+async function loadCatalog() {
+  const [metrics, dimensions] = await Promise.all([
+    Metric.find({ isArchived: false }),
+    Dimension.find(),
+  ]);
+  return { metricIndex: buildMetricIndex(metrics), dimensionIndex: buildDimensionIndex(dimensions) };
+}
+
+/**
  * Reads a worksheet through a mapping and returns candidate facts plus the
  * stated totals to reconcile against. Nothing is written.
  */
-async function extract({ worksheet, mapping, fileName, programId }) {
-  const metrics = await Metric.find({ isArchived: false });
-  const dimensions = await Dimension.find();
-  const metricIndex = buildMetricIndex(metrics);
-  const dimensionIndex = buildDimensionIndex(dimensions);
+async function extract({ worksheet, mapping, fileName, programId, catalog }) {
+  const { metricIndex, dimensionIndex } = catalog ?? (await loadCatalog());
 
   const candidates = [];
   const statedTotals = [];
@@ -762,6 +781,9 @@ async function commit({ planResult, batch, user, session = null }) {
  * them superseded, so the data returns to its exact pre-import state.
  */
 async function rollback({ batch, user }) {
+  // Undoing an import moves figures just as writing them does.
+  invalidateFigures('summary::', 'org-totals::', 'scorecard::', 'compare::', 'funnel::');
+
   const written = await Fact.find({ batch: batch._id }).sort({ version: -1 });
 
   let restored = 0;
@@ -887,6 +909,7 @@ async function suggestMapping({ worksheet, fileName }) {
 
 module.exports = {
   extract,
+  loadCatalog,
   diffCandidates,
   reconcile,
   plan,

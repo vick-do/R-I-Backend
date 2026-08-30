@@ -7,6 +7,7 @@ const imports = require('./import.service');
 const audit = require('./audit.service');
 const { logger } = require('../utils/logger');
 const { buildDimensionFields } = require('../utils/dimensions');
+const { memo, invalidate: invalidateCache } = require('../utils/memo');
 
 /**
  * Pulls a connected sheet and turns it into facts through the same pipeline an
@@ -76,9 +77,12 @@ async function planBlocks({ worksheet, source, fileName }) {
   const issues = [];
   const checks = [];
 
+  // Read once for the whole tab rather than once per block.
+  const catalog = await imports.loadCatalog();
+
   for (const block of blocks) {
     const programId = block.program?._id ?? block.program;
-    const result = await imports.extract({ worksheet, mapping: block.mapping, fileName, programId });
+    const result = await imports.extract({ worksheet, mapping: block.mapping, fileName, programId, catalog });
 
     /**
      * A block that reads nothing has lost the thing it was pointed at.
@@ -184,6 +188,7 @@ async function syncSource(sourceId, { user = null, force = false } = {}) {
     source.lastStatus = 'failed';
     source.lastMessage = err.message;
     await source.save();
+    invalidateCache('live-sources::');
     logger.error('Sheet sync failed', { source: String(source._id), error: err.message });
     return { status: 'failed', message: err.message, source };
   }
@@ -209,6 +214,7 @@ async function syncSource(sourceId, { user = null, force = false } = {}) {
     source.lastStatus = 'synced';
     source.lastMessage = 'Already up to date.';
     await source.save();
+    invalidateCache('live-sources::');
 
     return { status: 'synced', summary: planResult.summary, source };
   }
@@ -232,6 +238,7 @@ async function syncSource(sourceId, { user = null, force = false } = {}) {
     source.lastMessage = verdict.reasons[0] ?? 'Held for review.';
     source.lastBatch = batch._id;
     await source.save();
+    invalidateCache('live-sources::');
 
     return {
       status: 'needs_review',
@@ -256,6 +263,7 @@ async function syncSource(sourceId, { user = null, force = false } = {}) {
     created + updated === 0 ? 'Already up to date.' : `${created} new, ${updated} revised.`;
   source.lastBatch = batch._id;
   await source.save();
+  invalidateCache('live-sources::');
 
   await audit.record({
     action: 'import.commit',
@@ -350,66 +358,80 @@ async function dryRun({ spreadsheetId, tabName, programId, mapping }) {
  *
  * Three things keep this from becoming a liability on a page load:
  *
+ *   · it never blocks. The request is answered from the figures already stored
+ *     and the sheet is read behind it, so a slow sheet cannot make a slow
+ *     dashboard. An earlier version waited up to two and a half seconds for the
+ *     read to finish, which put that delay on every page touching a live source
+ *     for as long as the read took;
  *   · one refresh at a time per source, so ten people opening the page at once
  *     make one call to Google rather than ten;
- *   · a short deadline, after which the caller stops waiting and renders the
- *     figures already stored — a slow sheet must not become a slow dashboard.
- *     The refresh keeps running, so what it fetches is there for the next
- *     request, and an open page polls for exactly that;
  *   · failure is swallowed and recorded on the source, never raised. A page
  *     that cannot reach Google still has last night's numbers, and showing
- *     those beats showing an error.
+ *     those beats showing an error — and an unhandled rejection here would take
+ *     the whole server down.
+ *
+ * The page learns the new figures on its next poll, which is what `pending`
+ * in the response is for.
  */
 const inFlight = new Map();
 
-async function refreshIfStale({ programIds, deadlineMs = 2500 }) {
-  const now = Date.now();
+/**
+ * The sources feeding this page, if any refresh on view.
+ *
+ * Looked up twice per request — once to decide whether to read the sheet again
+ * and once to tell the reader how fresh the figures are — and the answer is
+ * almost always "none". Held briefly so those two lookups cost one query
+ * between them, and none at all for the pages that have no live source.
+ *
+ * The window is far shorter than any refresh interval, so a staleness decision
+ * is never more than a few seconds behind.
+ */
+const SOURCES_TTL_MS = 5_000;
 
-  const sources = await SheetSource.find({
-    program: { $in: programIds },
-    isEnabled: true,
-    refreshIntervalMinutes: { $gt: 0 },
-  }).select('_id lastSyncedAt refreshIntervalMinutes');
+function liveSources(programIds) {
+  return memo(
+    `live-sources::${programIds.map(String).sort().join(',')}`,
+    SOURCES_TTL_MS,
+    () =>
+      SheetSource.find({
+        program: { $in: programIds },
+        isEnabled: true,
+        refreshIntervalMinutes: { $gt: 0 },
+      })
+        .select('_id tabName lastSyncedAt lastStatus refreshIntervalMinutes')
+        .lean()
+  );
+}
+
+async function refreshIfStale({ programIds }) {
+  const now = Date.now();
+  const sources = await liveSources(programIds);
+
+  if (sources.length === 0) return { stale: false, checkedAt: null };
 
   const due = sources.filter((s) => {
     const age = s.lastSyncedAt ? now - s.lastSyncedAt.getTime() : Infinity;
     return age >= s.refreshIntervalMinutes * 60_000;
   });
 
-  if (due.length === 0) {
-    return { refreshed: [], stale: false, checkedAt: sources.length ? new Date() : null };
-  }
-
-  const runs = due.map((source) => {
+  for (const source of due) {
     const key = String(source._id);
-    if (!inFlight.has(key)) {
-      const run = syncSource(source._id)
+    if (inFlight.has(key)) continue;
+
+    inFlight.set(
+      key,
+      syncSource(source._id)
         .catch((err) => {
           logger.warn('Live refresh failed', { source: key, error: err.message });
-          return { status: 'failed', message: err.message };
         })
-        .finally(() => inFlight.delete(key));
-      inFlight.set(key, run);
-    }
-    return inFlight.get(key);
-  });
-
-  // Whichever finishes first — every refresh, or the deadline.
-  const timeout = new Promise((resolve) => setTimeout(() => resolve('timeout'), deadlineMs));
-  const outcome = await Promise.race([Promise.all(runs), timeout]);
-
-  if (outcome === 'timeout') {
-    logger.warn('Live refresh still running past its deadline; serving stored figures', {
-      sources: due.map((s) => String(s._id)),
-    });
-    return { refreshed: [], stale: true, checkedAt: new Date() };
+        .finally(() => inFlight.delete(key))
+    );
   }
 
-  return {
-    refreshed: outcome.map((r) => ({ status: r.status, message: r.message ?? null })),
-    stale: false,
-    checkedAt: new Date(),
-  };
+  // Only this page's own sources count. A read running for one programme is no
+  // reason to tell every other page that its figures are about to change.
+  const running = sources.some((s) => inFlight.has(String(s._id)));
+  return { stale: running, checkedAt: new Date() };
 }
 
-module.exports = { assess, planBlocks, syncSource, syncAll, inspectTab, dryRun, refreshIfStale };
+module.exports = { assess, planBlocks, syncSource, syncAll, inspectTab, dryRun, refreshIfStale, liveSources };

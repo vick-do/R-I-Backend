@@ -109,13 +109,8 @@ async function getOrgTotals(req, res, next) {
  * hand has no "last updated from the sheet" to report.
  */
 async function liveStatus(programIds, refresh) {
-  const sources = await SheetSource.find({
-    program: { $in: programIds },
-    isEnabled: true,
-    refreshIntervalMinutes: { $gt: 0 },
-  })
-    .select('tabName lastSyncedAt lastStatus refreshIntervalMinutes')
-    .lean();
+  // The same lookup `refreshIfStale` just made, answered from its cache.
+  const sources = await sheetSync.liveSources(programIds);
 
   if (sources.length === 0) return null;
 
@@ -172,10 +167,9 @@ async function getSummary(req, res, next) {
 
     const programIds = await facts.resolveProgramIds(program._id, { includeDescendants });
 
-    // A source with a freshness window is re-read before the page is built, so
-    // a sheet still being filled in shows what it says now. Sources without one
-    // are untouched, and a refresh that fails or runs long never blocks the
-    // page — the stored figures are served instead.
+    // A source with a freshness window is re-read behind this request, so a
+    // sheet still being filled in reaches the page on its next poll. Sources
+    // without one are untouched, and nothing here delays the response.
     const refresh = await sheetSync.refreshIfStale({ programIds });
 
     const [summary, years, live] = await Promise.all([

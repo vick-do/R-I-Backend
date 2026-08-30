@@ -339,6 +339,51 @@ async function main() {
   const anonQuality = await request('GET', '/api/v1/insights/data-quality');
   check('Data quality is not', anonQuality.status === 401, `got ${anonQuality.status}`);
 
+  // --------------------------------------------------------- computed pages
+  //
+  // The pages are read far more often than the figures change, and several
+  // readers arrive together asking for the same thing. Those are held briefly
+  // and shared — but a cached figure that outlives the write that changed it is
+  // simply a wrong figure, so every write drops them.
+  section('Reused pages, dropped the moment a figure moves');
+
+  const readTotal = async () => {
+    const page = await request('GET', '/api/v1/facts/summary?program=digital-skills-web3', { token });
+    return page.body.data?.metrics.find((m) => m.key === 'learners_total')?.total;
+  };
+
+  const first = await readTotal();
+  check('Web3 reads 38', first === 38, String(first));
+
+  // Two reads in a row agree, whether or not the second was computed again.
+  check('A repeat read agrees with the first', (await readTotal()) === first);
+
+  // Written to the gender split, because that is the one Web3's total is
+  // derived from — revising a different axis would leave the total alone and
+  // prove nothing about the cache.
+  const wrote = await request('POST', '/api/v1/facts', {
+    token,
+    body: {
+      program: 'digital-skills-web3',
+      metric: 'learners_total',
+      periodType: 'all_time',
+      dimensions: { gender: 'male' },
+      value: 27,
+    },
+  });
+  check('A figure is revised', wrote.status < 300, `got ${wrote.status}`);
+  check('…and recorded as a revision, not a new figure',
+    wrote.body.data?.outcome === 'updated', wrote.body.data?.outcome);
+
+  const afterWrite = await readTotal();
+  check('The page reflects it immediately, not when a timer expires',
+    afterWrite === 39, `got ${afterWrite}, expected 39`);
+
+  // The Overview is built from the same figures and must move with them.
+  const scored = await request('GET', '/api/v1/insights/scorecard', { token });
+  const scoreLearners = scored.body.data?.totals.find((t) => t.key === 'learners_total');
+  check('And so does the Overview', scoreLearners?.value === 1593, String(scoreLearners?.value));
+
   const unknownMetric = await request('GET', '/api/v1/insights/compare?metric=not_a_metric', { token });
   check('An unknown metric is a 404', unknownMetric.status === 404, `got ${unknownMetric.status}`);
 

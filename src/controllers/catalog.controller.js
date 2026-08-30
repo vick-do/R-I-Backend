@@ -3,6 +3,7 @@ const Metric = require('../models/Metric.model');
 const Dimension = require('../models/Dimension.model');
 const { sendSuccess, sendError, ERROR_CODES } = require('../utils/response');
 const audit = require('../services/audit.service');
+const catalog = require('../services/catalog.cache');
 
 function formatProgram(program) {
   return {
@@ -24,7 +25,7 @@ function formatProgram(program) {
 /** Returns the programme tree, nested to mirror the dashboard navigation. */
 async function listPrograms(req, res, next) {
   try {
-    const flat = await Program.find({ isArchived: false }).sort({ order: 1 }).lean();
+    const flat = (await catalog.programs()).filter((p) => !p.isArchived);
 
     if (req.query.flat === 'true') {
       sendSuccess(res, 200, { data: { programs: flat.map(formatProgram) } });
@@ -68,9 +69,8 @@ async function getProgram(req, res, next) {
 
 async function listMetrics(req, res, next) {
   try {
-    const filter = { isArchived: false };
-    if (req.query.category) filter.category = req.query.category;
-    const metrics = await Metric.find(filter).sort({ category: 1, label: 1 });
+    const all = await catalog.metrics();
+    const metrics = req.query.category ? all.filter((m) => m.category === req.query.category) : all;
     sendSuccess(res, 200, { data: { metrics } });
   } catch (err) {
     next(err);
@@ -86,6 +86,7 @@ async function createMetric(req, res, next) {
     }
 
     const metric = await Metric.create(req.body);
+    catalog.invalidate('metrics');
 
     await audit.record({
       action: 'metric.create',
@@ -116,6 +117,7 @@ async function updateMetric(req, res, next) {
     const { key: _ignored, ...updates } = req.body;
     Object.assign(metric, updates);
     await metric.save();
+    catalog.invalidate('metrics');
 
     await audit.record({
       action: 'metric.update',
@@ -136,7 +138,7 @@ async function updateMetric(req, res, next) {
 
 async function listDimensions(_req, res, next) {
   try {
-    const dimensions = await Dimension.find().sort({ name: 1 });
+    const dimensions = [...(await catalog.dimensions())].sort((a, b) => a.name.localeCompare(b.name));
     sendSuccess(res, 200, { data: { dimensions } });
   } catch (err) {
     next(err);

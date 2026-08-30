@@ -466,6 +466,46 @@ async function main() {
   check('A direct call explains what is missing', threw?.status === 503 && /GOOGLE_CLIENT_EMAIL/.test(threw.message),
     threw?.message);
 
+  // ---------------------------------------- a page load never waits on a sheet
+  //
+  // Opening a programme fed by a live source kicks off a read of that sheet.
+  // That read takes seconds — eight against EdTech Mondays — and an earlier
+  // version made the request wait up to two and a half of them, on every page
+  // touching a live source, for as long as the read ran. It has to return at
+  // once and let the page pick up the result on its next poll.
+  section('A live refresh never blocks the page');
+
+  const SheetSource = require('../src/models/SheetSource.model');
+  const live = await SheetSource.create({
+    spreadsheetId: 'sheet-that-cannot-be-reached',
+    tabName: 'Live',
+    program: grow._id,
+    mapping: {},
+    refreshIntervalMinutes: 5,
+    lastSyncedAt: new Date(Date.now() - 60 * 60 * 1000),
+  });
+
+  const started = Date.now();
+  const first = await sheetSync.refreshIfStale({ programIds: [grow._id] });
+  const elapsed = Date.now() - started;
+
+  check('It returns straight away', elapsed < 500, `took ${elapsed}ms`);
+  check('And says a read is in flight', first.stale === true, JSON.stringify(first));
+
+  // The lock means a second visitor joins the first read rather than starting one.
+  const second = await sheetSync.refreshIfStale({ programIds: [grow._id] });
+  check('A second visitor does not start another', second.stale === true, JSON.stringify(second));
+
+  // A programme with no live source is never told anything is refreshing.
+  const quiet = await sheetSync.refreshIfStale({ programIds: [preMest._id] });
+  check('An unrelated page reports nothing pending', quiet.stale === false, JSON.stringify(quiet));
+
+  // The read fails — no credentials — and that must not surface as a crash.
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  check('A failed read is swallowed, not thrown', true);
+
+  await SheetSource.deleteOne({ _id: live._id });
+
   console.log(`\n\x1b[1m${passed} passed, ${failed} failed\x1b[0m`);
 
   await mongoose.disconnect();

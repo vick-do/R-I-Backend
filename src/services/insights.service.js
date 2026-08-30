@@ -3,6 +3,7 @@ const Program = require('../models/Program.model');
 const Fact = require('../models/Fact.model');
 const { orgFigures, periodFilter, resolveTotalCore, resolveProgramIds } = require('./facts.service');
 const { signatureKey, slugifyName } = require('../utils/dimensions');
+const { memo } = require('../utils/memo');
 
 /**
  * Derived views over the recorded facts: comparisons across programmes,
@@ -38,7 +39,14 @@ async function yearsWithData() {
  * `delta: null` and an empty series, and the UI shows no badge rather than a
  * flattering one.
  */
-async function scorecard({ year } = {}) {
+/** The Overview is the most-read page in the system and the most expensive. */
+const SCORECARD_TTL_MS = 20_000;
+
+function scorecard(options = {}) {
+  return memo(`scorecard::${options.year ?? 'all'}`, SCORECARD_TTL_MS, () => computeScorecard(options));
+}
+
+async function computeScorecard({ year } = {}) {
   const metrics = await Metric.find({ isArchived: false, headlineOrder: { $ne: null } }).sort({
     headlineOrder: 1,
     category: 1,
@@ -47,15 +55,17 @@ async function scorecard({ year } = {}) {
   if (metrics.length === 0) return { totals: [], years: [] };
 
   const years = await yearsWithData();
-  const current = await orgFigures({ metrics, year });
 
-  // One reduction per year. The year list is short (the workbooks cover a
-  // handful), and reusing the same primitive is what keeps a sparkline point
-  // and the headline figure computed the same way.
-  const byYear = new Map();
-  for (const y of [...years].sort((a, b) => a - b)) {
-    byYear.set(y, await orgFigures({ metrics, year: y }));
-  }
+  // One reduction per year, plus the headline. The year list is short and each
+  // reduction is independent, so they run together — done one after another
+  // this was the slowest thing in the system, and it is on the front page.
+  const ordered = [...years].sort((a, b) => a - b);
+  const [current, ...perYear] = await Promise.all([
+    orgFigures({ metrics, year }),
+    ...ordered.map((y) => orgFigures({ metrics, year: y })),
+  ]);
+
+  const byYear = new Map(ordered.map((y, i) => [y, perYear[i]]));
 
   const totals = metrics.map((metric) => {
     const id = String(metric._id);

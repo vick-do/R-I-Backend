@@ -6,6 +6,8 @@ const Program = require('../models/Program.model');
 const { buildDimensionFields, signatureKey, slugifyName } = require('../utils/dimensions');
 const { buildPeriod } = require('../utils/period');
 const audit = require('./audit.service');
+const catalogCache = require('./catalog.cache');
+const { memo, invalidate } = require('../utils/memo');
 
 /**
  * Writes a fact append-only.
@@ -53,6 +55,11 @@ async function writeFact({
     existing.isCurrent = false;
     await existing.save({ session });
   }
+
+  // Any figure changing makes every computed page that could contain it wrong,
+  // so they all go. There are a handful of them and they cost a query to
+  // rebuild; serving a stale figure costs trust.
+  invalidate('summary::', 'org-totals::', 'scorecard::', 'compare::', 'funnel::');
 
   const [fact] = await Fact.create(
     [
@@ -120,7 +127,10 @@ async function writeFactAudited(params, req) {
 async function resolveProgramIds(programId, { includeDescendants = false } = {}) {
   const id = new mongoose.Types.ObjectId(programId);
   if (!includeDescendants) return [id];
-  const descendants = await Program.find({ ancestors: id }).select('_id').lean();
+  // Walked in memory: the tree is catalog, and reading it from the database on
+  // every request was a round trip spent on something that changes monthly.
+  const all = await catalogCache.programs();
+  const descendants = all.filter((p) => (p.ancestors ?? []).some((a) => String(a) === String(id)));
   return [id, ...descendants.map((d) => d._id)];
 }
 
@@ -510,7 +520,16 @@ async function rollUp({ programs, metrics, year, from, to }) {
  * present, even with no data — "not yet measured" and "zero" are different
  * statements and the Overview must not conflate them.
  */
-async function orgTotals({ year, from, to, headlineOnly = true } = {}) {
+async function orgTotals(options = {}) {
+  const { year, from, to, headlineOnly = true } = options;
+  return memo(
+    `org-totals::${year ?? 'all'}::${from ?? ''}::${to ?? ''}::${headlineOnly}`,
+    SUMMARY_TTL_MS,
+    () => computeOrgTotals({ year, from, to, headlineOnly })
+  );
+}
+
+async function computeOrgTotals({ year, from, to, headlineOnly = true } = {}) {
   const metricFilter = { isArchived: false };
   if (headlineOnly) metricFilter.headlineOrder = { $ne: null };
   else metricFilter.rollsUpToOrgTotal = true;
@@ -545,8 +564,25 @@ async function orgTotals({ year, from, to, headlineOnly = true } = {}) {
  * Built from the signatures present in the data rather than from the metric's
  * allowed list, so a page only ever renders breakdowns that exist.
  */
-async function programSummary({ programId, programIds: resolved, includeDescendants = false, year }) {
-  const programIds = resolved ?? (await resolveProgramIds(programId, { includeDescendants }));
+/**
+ * How long a computed page may be reused.
+ *
+ * Short enough that a figure recorded by hand is on the page by the time
+ * somebody looks for it, long enough that a burst of readers is one query.
+ * Every write path invalidates explicitly, so this is a backstop.
+ */
+const SUMMARY_TTL_MS = 20_000;
+
+async function programSummary(options) {
+  const programIds =
+    options.programIds ?? (await resolveProgramIds(options.programId, { includeDescendants: options.includeDescendants }));
+
+  // Keyed by exactly what the answer depends on.
+  const key = `summary::${programIds.map(String).sort().join(',')}::${options.year ?? 'all'}`;
+  return memo(key, SUMMARY_TTL_MS, () => computeProgramSummary({ ...options, programIds }));
+}
+
+async function computeProgramSummary({ programIds, includeDescendants = false, year }) {
   const baseMatch = { isCurrent: true, program: { $in: programIds }, ...periodFilter({ year }) };
 
   /**
@@ -565,12 +601,11 @@ async function programSummary({ programId, programIds: resolved, includeDescenda
    * that axis, and the coverage note says when it falls short of the headline.
    */
   const reduction = (async () => {
-    const [holders, allMetrics] = await Promise.all([
-      Program.find({ _id: { $in: programIds }, isReportable: true, isArchived: false })
-        .select('_id name pageKey')
-        .lean(),
-      Metric.find({ isArchived: false }).select('_id key aggregation').lean(),
-    ]);
+    // Both come from the catalog cache: they are read here, never written, and
+    // re-fetching them on every page was most of the page's round trips.
+    const [allPrograms, allMetrics] = await Promise.all([catalogCache.programs(), catalogCache.metrics()]);
+    const wanted = new Set(programIds.map(String));
+    const holders = allPrograms.filter((p) => wanted.has(String(p._id)) && p.isReportable && !p.isArchived);
     return rollUp({ programs: holders, metrics: allMetrics, year });
   })();
 
@@ -630,9 +665,10 @@ async function programSummary({ programId, programIds: resolved, includeDescenda
 
   if (combined.length === 0) return { metrics: [] };
 
-  const metricIds = [...new Set(combined.map((row) => String(row._id.metric)))];
-  // displayOrder decides which figure leads the page and is charted by default.
-  const metrics = await Metric.find({ _id: { $in: metricIds } }).sort({ displayOrder: 1, label: 1 });
+  const metricIds = new Set(combined.map((row) => String(row._id.metric)));
+  // displayOrder decides which figure leads the page and is charted by default;
+  // the cache already holds them in that order.
+  const metrics = (await catalogCache.metrics()).filter((m) => metricIds.has(String(m._id)));
 
   /** Rows for one metric, bucketed by signature key. */
   const bucket = (rows, metricId) => {
@@ -726,10 +762,18 @@ async function programSummary({ programId, programIds: resolved, includeDescenda
 
 /** Years that have data, for the period selector. */
 async function availableYears({ programId, programIds, includeDescendants = false } = {}) {
-  const match = { isCurrent: true, year: { $ne: null } };
   // The caller usually resolved the tree already; re-walking it costs a round
   // trip to the database for an answer it is holding.
   const ids = programIds ?? (programId ? await resolveProgramIds(programId, { includeDescendants }) : null);
+  return memo(
+    `summary::years::${ids ? ids.map(String).sort().join(',') : 'all'}`,
+    SUMMARY_TTL_MS,
+    () => computeAvailableYears(ids)
+  );
+}
+
+async function computeAvailableYears(ids) {
+  const match = { isCurrent: true, year: { $ne: null } };
   if (ids) match.program = { $in: ids };
 
   const rows = await Fact.aggregate([
