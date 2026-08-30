@@ -335,8 +335,10 @@ async function extractLong({
    *
    * Only opt-in: elsewhere a repeated coordinate really is a source error, and
    * silently adding those together is how a total quietly doubles.
+   *
+   * `sum` adds them; `mean` averages them, for a rate that cannot be added.
    */
-  if (mapping.aggregate === 'sum') {
+  if (mapping.aggregate === 'sum' || mapping.aggregate === 'mean') {
     const merged = new Map();
     for (const candidate of localCandidates) {
       const key = [
@@ -355,7 +357,15 @@ async function extractLong({
       }
     }
     for (const c of merged.values()) {
-      candidates.push({ ...c, sourceRef: `${c.sourceRef} (+${c.rows - 1} more)`.replace(' (+0 more)', '') });
+      // `mean` is what a rate needs: the AI Startup sheet rates confidence in
+      // thirty-odd topics per discipline, and the figure for that discipline is
+      // their average, not their sum — six 80%s do not make 480%.
+      const value = mapping.aggregate === 'mean' ? c.value / c.rows : c.value;
+      candidates.push({
+        ...c,
+        value,
+        sourceRef: `${c.sourceRef} (+${c.rows - 1} more)`.replace(' (+0 more)', ''),
+      });
     }
     return;
   }
@@ -488,11 +498,42 @@ async function extractCrosstab({
 
   const fallbackPeriod = buildPeriod(mapping.defaultPeriod ?? { periodType: 'all_time' });
 
+  /**
+   * Rows normally name the metric. They can instead name a value of one
+   * dimension, with the metric fixed for the whole block — which is the shape
+   * of the AI Startup satisfaction table, where the months run across the top
+   * and Tech / Business / Product run down the side. This mirrors what
+   * `headerRole: 'dimension'` already does for the column axis.
+   */
+  const labelIsDimension = ct.labelRole === 'dimension';
+  const labelDimension = labelIsDimension ? dimensionIndex.get(ct.labelDimension) : null;
+  const fixedMetric = labelIsDimension ? metricIndex.get(normalizeLabel(ct.metric ?? '')) : null;
+
+  if (labelIsDimension && !fixedMetric) {
+    issues.push({
+      severity: 'error',
+      message: `A cross-tab whose rows are ${ct.labelDimension} values needs a metric of its own; "${ct.metric}" matched none.`,
+    });
+    return;
+  }
+
   for (let row = firstRow; row <= lastRow; row += 1) {
     const label = readText(worksheet.getCell(row, labelCol));
     if (!label) continue;
 
-    const metric = metricIndex.get(normalizeLabel(label));
+    let metric;
+    let rowDimensions = null;
+
+    if (labelIsDimension) {
+      const ref = sourceRef(fileName, worksheet.name, `${columnLetter(labelCol)}${row}`);
+      const value = await resolveDimensionValue(labelDimension, label, issues, ref);
+      if (!value) continue; // A heading rather than a row of data.
+      metric = fixedMetric;
+      rowDimensions = { [ct.labelDimension]: value };
+    } else {
+      metric = metricIndex.get(normalizeLabel(label));
+    }
+
     if (!metric) continue; // Section headings and blank rows fall through harmlessly.
 
     for (const [col, header] of headers) {
@@ -502,7 +543,7 @@ async function extractCrosstab({
 
       const scaled = scaleValue(value, metric, mapping.percentScale);
       const ref = sourceRef(fileName, worksheet.name, address);
-      const dimensions = { ...fixedDimensions };
+      const dimensions = { ...fixedDimensions, ...(rowDimensions ?? {}) };
       let period = fallbackPeriod;
 
       if (header.kind === 'period') {
@@ -529,9 +570,54 @@ async function extractCrosstab({
  */
 async function plan({ worksheet, mapping, fileName, programId }) {
   const { candidates, statedTotals, issues } = await extract({ worksheet, mapping, fileName, programId });
+  return diffCandidates({ candidates, statedTotals, issues });
+}
 
+/**
+ * Compares a set of candidates against what is already stored.
+ *
+ * Separate from `extract` so a caller holding several blocks can combine their
+ * candidates first and diff the result once. A tab whose blocks each describe
+ * part of one figure — the AI Startup sheet rates the same discipline in six
+ * places — has to be reduced before it is compared, or the same coordinate is
+ * diffed six times and the last one silently wins.
+ */
+async function diffCandidates({ candidates, statedTotals = [], issues = [] }) {
   const diff = { created: [], updated: [], unchanged: [], conflicts: [] };
   const seen = new Map();
+
+  /**
+   * Every stored figure these candidates could collide with, fetched once.
+   *
+   * This used to be one query per candidate. On a sheet of any size that is the
+   * dominant cost of a sync — EdTech Mondays plans 370 figures, so a refresh
+   * that found nothing changed still cost 370 round trips to the database, and
+   * with the refresh now firing when a page is opened it was doing that while
+   * someone waited for the page.
+   */
+  const existingByCoordinate = new Map();
+  if (candidates.length > 0) {
+    const stored = await Fact.find({
+      isCurrent: true,
+      program: { $in: [...new Set(candidates.map((c) => String(c.programId)))] },
+      metric: { $in: [...new Set(candidates.map((c) => String(c.metric._id)))] },
+    })
+      .select('program metric periodType periodStart dimensionKey value')
+      .lean();
+
+    for (const fact of stored) {
+      existingByCoordinate.set(
+        [
+          String(fact.program),
+          String(fact.metric),
+          fact.periodType,
+          fact.periodStart?.toISOString() ?? 'null',
+          fact.dimensionKey ?? '',
+        ].join('::'),
+        fact
+      );
+    }
+  }
 
   for (const candidate of candidates) {
     const dimFields = buildDimensionFields(candidate.dimensions);
@@ -557,14 +643,7 @@ async function plan({ worksheet, mapping, fileName, programId }) {
     }
     seen.set(coordinate, candidate);
 
-    const existing = await Fact.findOne({
-      program: candidate.programId,
-      metric: candidate.metric._id,
-      periodType: candidate.period.periodType,
-      periodStart: candidate.period.periodStart,
-      dimensionKey: dimFields.dimensionKey,
-      isCurrent: true,
-    });
+    const existing = existingByCoordinate.get(coordinate);
 
     if (!existing) diff.created.push(summarise(candidate, dimFields));
     else if (existing.value === candidate.value) diff.unchanged.push(summarise(candidate, dimFields));
@@ -808,6 +887,8 @@ async function suggestMapping({ worksheet, fileName }) {
 
 module.exports = {
   extract,
+  diffCandidates,
+  reconcile,
   plan,
   commit,
   rollback,

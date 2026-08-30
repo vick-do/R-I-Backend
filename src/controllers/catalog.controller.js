@@ -15,7 +15,9 @@ function formatProgram(program) {
     category: program.category,
     metricKeys: program.metricKeys,
     description: program.description,
+    navLabel: program.navLabel ?? null,
     isReportable: program.isReportable,
+    allowsManualEntry: program.allowsManualEntry !== false,
   };
 }
 

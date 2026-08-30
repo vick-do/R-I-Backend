@@ -19,7 +19,9 @@
 const programs = [
   { pageKey: 'overview', name: 'Overview', category: 'container', isReportable: false },
 
-  { pageKey: 'ai-startup-lab', name: 'AI Startup Lab', category: 'lab' },
+  { pageKey: 'ai-startup-lab', name: 'AI Startup Lab', category: 'lab',
+    metricKeys: ['satisfaction', 'skill_confidence_before', 'skill_confidence_after'], allowsManualEntry: false,
+    description: 'Monthly satisfaction and before-and-after skill confidence across the Tech, Business and Product disciplines.' },
   { pageKey: 'ai-startup-lab-2026', name: '2026', parent: 'ai-startup-lab', category: 'container', isReportable: false },
   { pageKey: 'ai-startup-lab-2027', name: '2027', parent: 'ai-startup-lab', category: 'container', isReportable: false },
   { pageKey: 'ai-startup-lab-2028', name: '2028', parent: 'ai-startup-lab', category: 'container', isReportable: false },
@@ -31,18 +33,20 @@ const programs = [
 
   { pageKey: 'digital-skills', name: 'Digital Skills', parent: 'mest-x', category: 'container', isReportable: false },
   { pageKey: 'digital-skills-web3', name: 'Web3', parent: 'digital-skills', category: 'digital_skills',
-    metricKeys: ['learners_total'] },
+    metricKeys: ['learners_total'], allowsManualEntry: false },
   { pageKey: 'digital-skills-pre-mest', name: 'Pre-Mest', parent: 'digital-skills', category: 'digital_skills',
-    metricKeys: ['learners_total', 'graduates', 'graduation_rate'] },
+    metricKeys: ['learners_total', 'graduates', 'graduation_rate'], allowsManualEntry: false },
   { pageKey: 'digital-skills-grow', name: 'Grow', parent: 'digital-skills', category: 'digital_skills',
-    metricKeys: ['learners_total', 'mothers', 'graduates_employed'] },
+    // `graduates` sits beside `graduates_employed` because the cohort entry form
+    // records a plain graduate count, which the summary sheet never stated.
+    metricKeys: ['learners_total', 'mothers', 'graduates', 'graduates_employed'] },
   // Cohort-based training programmes with the same shape as the three above:
   // a roster of participants, a gender split, and employment outcomes.
   { pageKey: 'digital-skills-hospitality', name: 'Hospitality', parent: 'digital-skills', category: 'digital_skills',
-    metricKeys: ['learners_total', 'graduates_employed'],
+    metricKeys: ['learners_total', 'graduates_employed'], allowsManualEntry: false,
     description: 'Hospitality and tourism training. Figures are counted from the applicant roster, which states no totals of its own.' },
   { pageKey: 'digital-skills-doulogic', name: 'Doulogic', parent: 'digital-skills', category: 'digital_skills',
-    metricKeys: ['learners_total'],
+    metricKeys: ['learners_total'], allowsManualEntry: false,
     description: 'Doulogic cohort. The roster and the tally block in the source sheet disagree — see Data quality.' },
 
   { pageKey: 'venture-support', name: 'Venture Support', parent: 'mest-x', category: 'container', isReportable: false },
@@ -53,25 +57,27 @@ const programs = [
     metricKeys: ['enterprises_total'], isArchived: true },
   { pageKey: 'venture-support-undp', name: 'UNDP-YAI', parent: 'venture-support-early-stage', category: 'venture_support',
     metricKeys: ['enterprises_total'] },
-  { pageKey: 'venture-support-absa', name: 'Absa partnership program', parent: 'venture-support-early-stage', category: 'venture_support',
+  // The page key stays `venture-support-absa`: it is the address the connected
+  // Absa sheet, the URL and every recorded figure's provenance point at.
+  { pageKey: 'venture-support-absa', name: 'Females supported by MEST', navLabel: 'Absa partnership program',
+    parent: 'venture-support-early-stage', category: 'venture_support',
     metricKeys: ['enterprises_total'] },
+  { pageKey: 'venture-support-mest-express', name: 'MEST Express', parent: 'venture-support-early-stage', category: 'venture_support',
+    metricKeys: ['enterprises_total', 'jobs_created'],
+    description: 'The 88 enterprises in the MEST Express cohort. Four later transitioned into MEST Scale and appear in both rosters.' },
   { pageKey: 'venture-support-grow-stage', name: 'Growth stage', parent: 'venture-support', category: 'container', isReportable: false },
   { pageKey: 'venture-support-edtech-fellowship', name: 'EdTech fellowship', parent: 'venture-support-grow-stage', category: 'venture_support',
     metricKeys: ['enterprises_total'] },
   { pageKey: 'venture-support-mest-scale', name: 'MEST Scale', parent: 'venture-support-grow-stage', category: 'venture_support',
     metricKeys: ['enterprises_total', 'jobs_created'],
     description: 'The 24 enterprises in the MEST Scale cohort, counted from the partner roster.' },
-  { pageKey: 'venture-support-mest-express', name: 'MEST Express', parent: 'venture-support-grow-stage', category: 'venture_support',
-    metricKeys: ['enterprises_total', 'jobs_created'],
-    description: 'The 88 enterprises in the MEST Express cohort. Four later transitioned into MEST Scale and appear in both rosters.' },
 
   { pageKey: 'ecosystem', name: 'Ecosystem', parent: 'mest-x', category: 'container', isReportable: false },
   { pageKey: 'ecosystem-edtech-mondays', name: 'EdTech Mondays', parent: 'ecosystem', category: 'ecosystem',
     metricKeys: [
       'posts', 'impressions', 'reach', 'engagement', 'reactions', 'comments',
-      'shares', 'clicks', 'video_views', 'engagement_rate', 'click_through_rate',
-      'targeted_impressions',
-    ] },
+      'shares', 'clicks', 'video_views', 'article_reach',
+    ], allowsManualEntry: false },
   { pageKey: 'ecosystem-edtech-mondays-2026', name: '2026', parent: 'ecosystem-edtech-mondays', category: 'container', isReportable: false },
   { pageKey: 'ecosystem-edtech-mondays-2027', name: '2027', parent: 'ecosystem-edtech-mondays', category: 'container', isReportable: false },
   { pageKey: 'ecosystem-edtech-mondays-2028', name: '2028', parent: 'ecosystem-edtech-mondays', category: 'container', isReportable: false },
@@ -225,6 +231,32 @@ const metrics = [
     aliases: ['Monthly revenue (GHS)'],
   },
 
+  {
+    key: 'satisfaction', displayOrder: 104, label: 'Satisfaction', category: 'people',
+    unit: 'percent', aggregation: 'avg',
+    description: 'Participant satisfaction, as reported in the monthly survey.',
+    allowedDimensions: ['discipline', 'cohort', 'gender'],
+    aliases: ['Satisfaction', 'General Satisfaction'],
+  },
+  // Before and after are separate metrics rather than one metric split by an
+  // assessment axis, because a headline card has to state a number somebody can
+  // quote. Averaging the two into "skill confidence: 56%" describes nobody: not
+  // the people who started, not the people who finished.
+  {
+    key: 'skill_confidence_before', displayOrder: 105, label: 'Skill confidence — before', category: 'people',
+    unit: 'percent', aggregation: 'avg',
+    description: 'Self-rated confidence before the teaching, averaged across every topic assessed in a discipline.',
+    allowedDimensions: ['discipline', 'cohort'],
+    aliases: ['Skill confidence before', 'Confidence before', 'BEFORE'],
+  },
+  {
+    key: 'skill_confidence_after', displayOrder: 106, label: 'Skill confidence — after', category: 'people',
+    unit: 'percent', aggregation: 'avg',
+    description: 'Self-rated confidence after the teaching, averaged across every topic assessed in a discipline.',
+    allowedDimensions: ['discipline', 'cohort'],
+    aliases: ['Skill confidence after', 'Confidence after', 'AFTER'],
+  },
+
   // ---- Social / EdTech Mondays -------------------------------------------
   {
     key: 'posts', displayOrder: 150, label: 'Posts', category: 'social', unit: 'count', aggregation: 'sum',
@@ -239,7 +271,7 @@ const metrics = [
   {
     key: 'reach', displayOrder: 120, label: 'Reach', category: 'social', unit: 'count', aggregation: 'sum',
     allowedDimensions: SOCIAL_DIMS,
-    aliases: ['Total Reach', 'Post Reach', 'Post reach', 'Reach', 'Audience reach'],
+    aliases: ['Total Reach', 'Post Reach', 'Post reach', 'Reach', 'Audience reach', 'Total Reach/ Views', 'Total Reach / Views'],
   },
   {
     key: 'engagement', displayOrder: 130, label: 'Engagement', category: 'social', unit: 'count', aggregation: 'sum',
@@ -285,6 +317,14 @@ const metrics = [
     key: 'targeted_impressions', displayOrder: 220, label: 'Targeted impressions', category: 'social', unit: 'count', aggregation: 'sum',
     allowedDimensions: SOCIAL_DIMS,
     aliases: ['Targeted impressions', 'Target impressions'],
+  },
+  {
+    key: 'article_reach', displayOrder: 230, label: 'Article reach', category: 'social',
+    unit: 'count', aggregation: 'sum',
+    description:
+      'Readers reached by press coverage. Counted apart from social reach because the sheet reports the two separately and adding them would count one audience under two headings.',
+    allowedDimensions: ['outlet'],
+    aliases: ['Total Article Reach', 'Article reach'],
   },
 ];
 
@@ -432,6 +472,15 @@ const dimensions = [
     name: 'program_stage', label: 'Programme stage', values: [],
   },
   {
+    // The three disciplines the AI Startup Lab teaches and reports against.
+    name: 'discipline', label: 'Discipline', isClosed: true,
+    values: [
+      { value: 'tech', label: 'Tech', order: 1 },
+      { value: 'business', label: 'Business', order: 2 },
+      { value: 'product', label: 'Product / Design', aliases: ['Product/Design', 'Product / Design', 'Design'], order: 3 },
+    ],
+  },
+  {
     name: 'open_source', label: 'Open source', isClosed: true,
     values: [
       { value: 'yes', label: 'Open source', aliases: ['Yes'], order: 1 },
@@ -465,6 +514,16 @@ const dimensions = [
       { value: 'channel-one-tv', label: 'Channel One TV', aliases: ['CHANNEL ONE TV', 'CHANNEL ONE'], order: 3 },
       { value: 'panelists', label: 'Panelists', aliases: ['PANELISTS'], order: 4 },
       { value: 'plugin-digital', label: 'Plugin Digital', order: 5 },
+    ],
+  },
+  {
+    // News sites that carried EdTech Mondays coverage. Open, because the next
+    // month's coverage will be somewhere new.
+    name: 'outlet', label: 'Outlet',
+    values: [
+      { value: 'citi-news-room', label: 'Citi News Room', aliases: ['Citi News Room'], order: 1 },
+      { value: 'myjoyonline', label: 'MyJoyOnline', aliases: ['myjoyonline', 'My Joy Online'], order: 2 },
+      { value: 'ghanaweb', label: 'GhanaWeb', aliases: ['Ghanaweb'], order: 3 },
     ],
   },
   {

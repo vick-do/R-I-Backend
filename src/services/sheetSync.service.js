@@ -6,6 +6,7 @@ const { previewSheet } = require('../utils/workbook');
 const imports = require('./import.service');
 const audit = require('./audit.service');
 const { logger } = require('../utils/logger');
+const { buildDimensionFields } = require('../utils/dimensions');
 
 /**
  * Pulls a connected sheet and turns it into facts through the same pipeline an
@@ -54,9 +55,16 @@ function assess(planResult, source) {
  * Plans every block on a tab against one read of the sheet, and merges the
  * results into a single plan.
  *
- * Blocks describe disjoint coordinates, so concatenating their candidates is
- * safe — and merging before assessing means one bad block holds the whole tab
- * rather than half of it landing.
+ * Blocks normally describe disjoint coordinates, so their candidates are read
+ * and diffed together and one bad block holds the whole tab rather than half of
+ * it landing.
+ *
+ * A source can instead say its blocks describe one figure between them, by
+ * setting `mergeBlocks` to 'mean' or 'sum'. The AI Startup sheet rates each
+ * discipline's confidence in six separate places on the page; the figure for
+ * that discipline is the average across all six, and without combining them
+ * first the same coordinate would be diffed six times over with the last one
+ * silently winning.
  */
 async function planBlocks({ worksheet, source, fileName }) {
   const blocks =
@@ -64,36 +72,92 @@ async function planBlocks({ worksheet, source, fileName }) {
       ? source.blocks
       : [{ name: source.tabName, program: source.program, mapping: source.mapping }];
 
-  const merged = {
-    candidates: [],
-    checks: [],
-    issues: [],
-    diff: { created: [], updated: [], unchanged: [], conflicts: [] },
-  };
+  const candidates = [];
+  const issues = [];
+  const checks = [];
 
   for (const block of blocks) {
     const programId = block.program?._id ?? block.program;
-    const result = await imports.plan({ worksheet, mapping: block.mapping, fileName, programId });
+    const result = await imports.extract({ worksheet, mapping: block.mapping, fileName, programId });
 
-    merged.candidates.push(...result.candidates);
-    merged.checks.push(...result.checks.map((c) => ({ ...c, label: `${block.name ?? ''} — ${c.label}`.trim() })));
-    merged.issues.push(...result.issues);
-    for (const key of ['created', 'updated', 'unchanged', 'conflicts']) {
-      merged.diff[key].push(...result.diff[key]);
+    /**
+     * A block that reads nothing has lost the thing it was pointed at.
+     *
+     * Mappings address the sheet by cell, so a table that moves or is deleted
+     * does not fail — it simply yields no rows, the sync reports no changes,
+     * and the figures that table used to supply stay on the page for ever with
+     * nothing left behind them. UNDP-YAI's innovator count sat there for weeks
+     * after the pivot it came from was removed from the sheet.
+     *
+     * So an empty block is an error, which holds the whole tab for review
+     * rather than letting the rest of it commit around the gap.
+     */
+    if (result.candidates.length === 0) {
+      issues.push({
+        severity: 'error',
+        message: `Block "${block.name ?? source.tabName}" read no figures. The range it points at is empty — the sheet has probably been restructured.`,
+      });
+    }
+
+    candidates.push(...result.candidates);
+    issues.push(...result.issues);
+
+    // Reconciled against its own block, never against the tab. Absa states 190
+    // enterprises above its regions and the same 190 above its districts; each
+    // total covers one of those breakdowns, and checking either against both
+    // added together reports a shortfall of exactly one whole programme.
+    checks.push(
+      ...imports
+        .reconcile(result.candidates, result.statedTotals)
+        .map((c) => ({ ...c, label: `${block.name ?? ''} — ${c.label}`.trim() }))
+    );
+  }
+
+  const combined = source.mergeBlocks ? combineDuplicates(candidates, source.mergeBlocks) : candidates;
+
+  // Diffed once, after any combining: a coordinate several blocks contribute to
+  // has to be reduced before it is compared with what is stored.
+  const planned = await imports.diffCandidates({ candidates: combined, issues });
+
+  return {
+    ...planned,
+    checks,
+    summary: { ...planned.summary, checksFailed: checks.filter((c) => c.status === 'fail').length, blocks: blocks.length },
+  };
+}
+
+/**
+ * Reduces candidates sharing one coordinate to a single figure.
+ *
+ * `mean` for a rate, `sum` for a count — the same distinction the per-block
+ * `aggregate` option draws, applied across blocks rather than within one.
+ */
+function combineDuplicates(candidates, how) {
+  const merged = new Map();
+
+  for (const candidate of candidates) {
+    const key = [
+      String(candidate.programId),
+      String(candidate.metric._id),
+      candidate.period.periodType,
+      candidate.period.periodStart?.toISOString() ?? 'null',
+      buildDimensionFields(candidate.dimensions).dimensionKey,
+    ].join('::');
+
+    const existing = merged.get(key);
+    if (existing) {
+      existing.value += candidate.value;
+      existing.parts += 1;
+    } else {
+      merged.set(key, { ...candidate, parts: 1 });
     }
   }
 
-  merged.summary = {
-    created: merged.diff.created.length,
-    updated: merged.diff.updated.length,
-    unchanged: merged.diff.unchanged.length,
-    conflicts: merged.diff.conflicts.length,
-    errors: merged.issues.filter((i) => i.severity === 'error').length,
-    checksFailed: merged.checks.filter((c) => c.status === 'fail').length,
-    blocks: blocks.length,
-  };
-
-  return merged;
+  return [...merged.values()].map(({ parts, ...c }) => ({
+    ...c,
+    value: how === 'mean' ? c.value / parts : c.value,
+    sourceRef: parts > 1 ? `${c.sourceRef} (+${parts - 1} more blocks)` : c.sourceRef,
+  }));
 }
 
 /**
@@ -126,6 +190,28 @@ async function syncSource(sourceId, { user = null, force = false } = {}) {
 
   const verdict = assess(planResult, source);
   const shouldCommit = force || (source.autoCommit && verdict.clean);
+
+  /**
+   * Nothing to write.
+   *
+   * A sheet that has not been edited plans the same figures it planned last
+   * time, and the diff says so. Committing that walks every candidate and asks
+   * the database about each one, which on a 370-figure sheet is hundreds of
+   * round trips to write nothing — and since a page opening can now trigger a
+   * refresh, it was doing that while somebody waited. An unchanged sheet is
+   * also not worth an import batch: the record would say a sync happened and
+   * changed nothing, once every five minutes, forever.
+   */
+  const noChanges = planResult.diff.created.length === 0 && planResult.diff.updated.length === 0;
+
+  if (shouldCommit && noChanges) {
+    source.lastSyncedAt = new Date();
+    source.lastStatus = 'synced';
+    source.lastMessage = 'Already up to date.';
+    await source.save();
+
+    return { status: 'synced', summary: planResult.summary, source };
+  }
 
   const batch = await ImportBatch.create({
     fileName,
@@ -253,4 +339,77 @@ async function dryRun({ spreadsheetId, tabName, programId, mapping }) {
   };
 }
 
-module.exports = { assess, planBlocks, syncSource, syncAll, inspectTab, dryRun };
+/**
+ * Pulls any source behind its own freshness window before a page is read.
+ *
+ * A source with no `refreshIntervalMinutes` is left alone: the nightly job is
+ * the right cadence for a workbook that only changes when someone edits it.
+ * A source that has one — EdTech Mondays, whose season is still running — is
+ * re-read when the stored figures are older than that window, so the page shows
+ * what the sheet says now rather than what it said last night.
+ *
+ * Three things keep this from becoming a liability on a page load:
+ *
+ *   · one refresh at a time per source, so ten people opening the page at once
+ *     make one call to Google rather than ten;
+ *   · a short deadline, after which the caller stops waiting and renders the
+ *     figures already stored — a slow sheet must not become a slow dashboard.
+ *     The refresh keeps running, so what it fetches is there for the next
+ *     request, and an open page polls for exactly that;
+ *   · failure is swallowed and recorded on the source, never raised. A page
+ *     that cannot reach Google still has last night's numbers, and showing
+ *     those beats showing an error.
+ */
+const inFlight = new Map();
+
+async function refreshIfStale({ programIds, deadlineMs = 2500 }) {
+  const now = Date.now();
+
+  const sources = await SheetSource.find({
+    program: { $in: programIds },
+    isEnabled: true,
+    refreshIntervalMinutes: { $gt: 0 },
+  }).select('_id lastSyncedAt refreshIntervalMinutes');
+
+  const due = sources.filter((s) => {
+    const age = s.lastSyncedAt ? now - s.lastSyncedAt.getTime() : Infinity;
+    return age >= s.refreshIntervalMinutes * 60_000;
+  });
+
+  if (due.length === 0) {
+    return { refreshed: [], stale: false, checkedAt: sources.length ? new Date() : null };
+  }
+
+  const runs = due.map((source) => {
+    const key = String(source._id);
+    if (!inFlight.has(key)) {
+      const run = syncSource(source._id)
+        .catch((err) => {
+          logger.warn('Live refresh failed', { source: key, error: err.message });
+          return { status: 'failed', message: err.message };
+        })
+        .finally(() => inFlight.delete(key));
+      inFlight.set(key, run);
+    }
+    return inFlight.get(key);
+  });
+
+  // Whichever finishes first — every refresh, or the deadline.
+  const timeout = new Promise((resolve) => setTimeout(() => resolve('timeout'), deadlineMs));
+  const outcome = await Promise.race([Promise.all(runs), timeout]);
+
+  if (outcome === 'timeout') {
+    logger.warn('Live refresh still running past its deadline; serving stored figures', {
+      sources: due.map((s) => String(s._id)),
+    });
+    return { refreshed: [], stale: true, checkedAt: new Date() };
+  }
+
+  return {
+    refreshed: outcome.map((r) => ({ status: r.status, message: r.message ?? null })),
+    stale: false,
+    checkedAt: new Date(),
+  };
+}
+
+module.exports = { assess, planBlocks, syncSource, syncAll, inspectTab, dryRun, refreshIfStale };

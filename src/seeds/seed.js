@@ -39,10 +39,12 @@ async function seedPrograms() {
       category: spec.category ?? 'container',
       metricKeys: spec.metricKeys ?? [],
       description: spec.description ?? null,
+      navLabel: spec.navLabel ?? null,
       isReportable: spec.isReportable ?? true,
       // Carried through so a programme retired in the catalog stays retired,
       // rather than reappearing on the next seed.
       isArchived: spec.isArchived ?? false,
+      allowsManualEntry: spec.allowsManualEntry ?? true,
     };
 
     const existing = await Program.findOne({ pageKey: spec.pageKey });

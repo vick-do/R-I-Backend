@@ -79,6 +79,8 @@ async function main() {
   const grow = await Program.findOne({ pageKey: 'digital-skills-grow' });
   const preMest = await Program.findOne({ pageKey: 'digital-skills-pre-mest' });
   const edtech = await Program.findOne({ pageKey: 'ecosystem-edtech-mondays' });
+  const aiLab = await Program.findOne({ pageKey: 'ai-startup-lab' });
+  const absa = await Program.findOne({ pageKey: 'venture-support-absa' });
   const learners = await Metric.findOne({ key: 'learners_total' });
 
   // ------------------------------------------------------------- the adapter
@@ -193,6 +195,180 @@ async function main() {
     /all periods/.test(facebook.checks[0]?.label ?? ''), facebook.checks[0]?.label);
   check('And it names the platform the total belongs to',
     /facebook/.test(facebook.checks[0]?.label ?? ''), facebook.checks[0]?.label);
+
+  // ------------------------------------------------ rows that are not metrics
+  //
+  // The AI Startup satisfaction table runs months across the top and Tech /
+  // Business / Product down the side. The cross-tab reader assumed a row label
+  // always named the metric, so every row of that table was silently skipped.
+  section('A cross-tab whose rows are dimension values');
+
+  const byDiscipline = sheets.toWorksheet({
+    name: 'AI Startup',
+    values: [
+      ['Month', 'January', 'February'],
+      ['Tech', 0.9429, 0.8621],
+      ['Business', 0.9857, 0.9862],
+    ],
+  });
+
+  const satisfaction = await imports.plan({
+    worksheet: byDiscipline,
+    fileName: 'Data Summary (live)',
+    programId: aiLab._id,
+    mapping: {
+      layout: 'crosstab',
+      percentScale: 'fraction',
+      crosstab: {
+        headerRow: 1, labelColumn: 'A', firstDataRow: 2, lastDataRow: 3,
+        firstDataColumn: 'B', lastDataColumn: 'C',
+        headerRole: 'period', defaultYear: 2026,
+        labelRole: 'dimension', labelDimension: 'discipline', metric: 'satisfaction',
+      },
+    },
+  });
+
+  check('Four figures planned, two disciplines over two months',
+    satisfaction.candidates.length === 4, String(satisfaction.candidates.length));
+  const techJan = satisfaction.candidates.find(
+    (c) => c.dimensions.discipline === 'tech' && c.period.periodLabel === 'January 2026'
+  );
+  check('The row label became the discipline, not the metric',
+    techJan?.metric.key === 'satisfaction' && techJan?.dimensions.discipline === 'tech',
+    JSON.stringify({ metric: techJan?.metric.key, dims: techJan?.dimensions }));
+  check('A fraction is scaled to a percentage', Math.abs((techJan?.value ?? 0) - 94.29) < 0.01,
+    String(techJan?.value));
+
+  // --------------------------------------------------- averaging, not adding
+  //
+  // Confidence is rated per topic and reported per discipline. Summing thirty
+  // ratings of 80% would report 2400%.
+  section('Repeated coordinates averaged rather than summed');
+
+  const topics = sheets.toWorksheet({
+    name: 'Learning Impact',
+    values: [
+      ['DISCIPLINE', 'TOPIC', 'BEFORE'],
+      ['Tech', 'Python', 0.6],
+      ['', 'JavaScript', 0.8],
+      ['Business', 'Pricing', 0.2],
+    ],
+  });
+
+  const topicMapping = (aggregate) => ({
+    layout: 'long', headerRow: 1, firstDataRow: 2, lastDataRow: 4,
+    defaultPeriod: { periodType: 'year', year: 2026 },
+    aggregate, percentScale: 'fraction',
+    columns: [
+      { column: 'A', matchBy: 'letter', role: 'dimension', target: 'discipline', fillDown: true },
+      { column: 'C', matchBy: 'letter', role: 'metric', target: 'skill_confidence_before' },
+    ],
+  });
+
+  const averaged = await imports.plan({
+    worksheet: topics, fileName: 'Data Summary (live)', programId: aiLab._id, mapping: topicMapping('mean'),
+  });
+  const tech = averaged.candidates.find((c) => c.dimensions.discipline === 'tech');
+  check('Two Tech topics average rather than add', Math.abs((tech?.value ?? 0) - 70) < 0.01,
+    String(tech?.value));
+  check('The discipline written once carries down its run',
+    averaged.candidates.length === 2, String(averaged.candidates.length));
+
+  const summed = await imports.plan({
+    worksheet: topics, fileName: 'Data Summary (live)', programId: aiLab._id, mapping: topicMapping('sum'),
+  });
+  check('`sum` still adds, so counts are unaffected',
+    Math.abs((summed.candidates.find((c) => c.dimensions.discipline === 'tech')?.value ?? 0) - 140) < 0.01);
+
+  // ------------------------------------- a total belongs to its own block
+  //
+  // Absa states 190 enterprises above its regions and the same 190 above its
+  // districts. Each total covers one of those breakdowns. Reconciling either
+  // against both added together reports a 380 that exists nowhere, and holds a
+  // correct sheet for review every night.
+  section('Stated totals are scoped to their own block');
+
+  const twoWays = sheets.toWorksheet({
+    name: 'Absa',
+    values: [
+      ['Region', 'District', 'Count'],
+      ['Greater Accra', 'Accra Metropolitan', 120],
+      ['Ashanti', 'Oforikrom', 70],
+      [],
+      ['Total', '', 190],
+    ],
+  });
+
+  const axis = (labelColumn, target) => ({
+    name: `By ${target}`,
+    program: absa._id,
+    mapping: {
+      layout: 'long', headerRow: 1, firstDataRow: 2, lastDataRow: 3,
+      defaultPeriod: { periodType: 'all_time' }, aggregate: 'sum',
+      fixedDimensions: { gender: 'female' },
+      statedTotalCells: ['C5'],
+      columns: [
+        { column: labelColumn, matchBy: 'letter', role: 'dimension', target },
+        { column: 'C', matchBy: 'letter', role: 'metric', target: 'enterprises_total' },
+      ],
+    },
+  });
+
+  const twoBlocks = await sheetSync.planBlocks({
+    worksheet: twoWays,
+    source: { tabName: 'Absa', program: absa._id, blocks: [axis('A', 'region'), axis('B', 'district')] },
+    fileName: 'Data Summary (live)',
+  });
+
+  check('Both axes are planned', twoBlocks.candidates.length === 4, String(twoBlocks.candidates.length));
+  check('Each stated 190 is checked against its own block, not both',
+    twoBlocks.checks.length === 2 && twoBlocks.checks.every((c) => c.actual === 190),
+    JSON.stringify(twoBlocks.checks.map((c) => c.actual)));
+  check('So a correct sheet reconciles rather than being held',
+    twoBlocks.checks.every((c) => c.status === 'pass'),
+    JSON.stringify(twoBlocks.checks.map((c) => c.status)));
+
+  // ------------------------------------------- a block that reads nothing
+  //
+  // Mappings address the sheet by cell, so a table that is deleted does not
+  // fail — the block yields no rows, the sync reports no changes, and the
+  // figures it used to supply sit on the page for ever with nothing behind
+  // them. UNDP-YAI showed 160 enterprises for weeks after the pivot they came
+  // from was removed from the workbook.
+  section('A block whose range has emptied is an error, not a no-op');
+
+  const vanished = await sheetSync.planBlocks({
+    worksheet: twoWays,
+    source: {
+      tabName: 'Absa',
+      program: absa._id,
+      blocks: [
+        axis('A', 'region'),
+        {
+          name: 'A table that used to be here',
+          program: absa._id,
+          mapping: {
+            layout: 'long', headerRow: 1, firstDataRow: 40, lastDataRow: 48,
+            defaultPeriod: { periodType: 'all_time' },
+            columns: [
+              { column: 'A', matchBy: 'letter', role: 'dimension', target: 'region' },
+              { column: 'C', matchBy: 'letter', role: 'metric', target: 'enterprises_total' },
+            ],
+          },
+        },
+      ],
+    },
+    fileName: 'Data Summary (live)',
+  });
+
+  const emptyBlock = vanished.issues.find((i) => i.severity === 'error' && /read no figures/.test(i.message));
+  check('The empty block is reported as an error', Boolean(emptyBlock), emptyBlock?.message);
+  check('And it names which block lost its range',
+    /A table that used to be here/.test(emptyBlock?.message ?? ''), emptyBlock?.message);
+  check('So the tab is held rather than committing around the gap',
+    sheetSync.assess(vanished, { maxChangePercent: 10 }).clean === false);
+  check('The block that still reads is unaffected',
+    vanished.candidates.length === 2, String(vanished.candidates.length));
 
   // --------------------------------------------------------- the safety gate
   section('Auto-commit gate');

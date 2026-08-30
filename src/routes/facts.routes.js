@@ -1,6 +1,6 @@
 const { Router } = require('express');
 const { validate } = require('../middleware/validate');
-const { authenticate, requireEditor } = require('../middleware/authenticate');
+const { authenticate, optionalAuthenticate, requireEditor } = require('../middleware/authenticate');
 const {
   getAggregate,
   getTotal,
@@ -19,13 +19,18 @@ const {
 
 const router = Router();
 
-// Read paths are open to every signed-in role, including viewers.
-router.get('/aggregate', authenticate, aggregateValidation, validate, getAggregate);
-router.get('/total', authenticate, totalValidation, validate, getTotal);
-router.get('/org-totals', authenticate, getOrgTotals);
-router.get('/summary', authenticate, getSummary);
+// The figures themselves are public — anyone can read what MEST has done,
+// with or without an account.
+router.get('/aggregate', optionalAuthenticate, aggregateValidation, validate, getAggregate);
+router.get('/total', optionalAuthenticate, totalValidation, validate, getTotal);
+router.get('/org-totals', optionalAuthenticate, getOrgTotals);
+router.get('/summary', optionalAuthenticate, getSummary);
+// The raw list is public too, but it names whoever recorded each figure, so
+// that part of it is withheld from anonymous callers — see `listFacts`.
+router.get('/', optionalAuthenticate, listFacts);
+
+// Provenance names staff and is not part of the public record.
 router.get('/history', authenticate, historyValidation, validate, getHistory);
-router.get('/', authenticate, listFacts);
 
 // Writing data requires editor or admin.
 router.post('/', authenticate, requireEditor, createFactValidation, validate, createFact);

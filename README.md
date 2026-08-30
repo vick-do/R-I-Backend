@@ -30,11 +30,11 @@ reduces to one shape:
 program × metric × period × dimensions = value
 ```
 
-| Source | program | metric | period | dimensions | value |
-|---|---|---|---|---|---|
-| Grow, "Accra 402" | Grow | `learners_total` | all-time | `{hub: accra}` | 402 |
-| Pre Mest, "Female 403" | Pre Mest | `learners_total` | all-time | `{gender: female}` | 403 |
-| EdTech, April Facebook | EdTech Mondays | `impressions` | 2026-04 | `{platform: facebook}` | 761993 |
+| Source                 | program        | metric           | period   | dimensions             | value  |
+| ---------------------- | -------------- | ---------------- | -------- | ---------------------- | ------ |
+| Grow, "Accra 402"      | Grow           | `learners_total` | all-time | `{hub: accra}`         | 402    |
+| Pre Mest, "Female 403" | Pre Mest       | `learners_total` | all-time | `{gender: female}`     | 403    |
+| EdTech, April Facebook | EdTech Mondays | `impressions`    | 2026-04  | `{platform: facebook}` | 761993 |
 
 One model serves every programme, so adding a programme or metric is data entry, not code.
 
@@ -48,14 +48,14 @@ author and timestamp.
 become reconciliation checks on the import batch, not facts. This is what prevents the old
 dashboard's situation of claiming 14,800 people trained against ~1,592 of real data.
 
-**3. Aggregation never mixes dimension signatures.** A fact's *signature* is the sorted list of
+**3. Aggregation never mixes dimension signatures.** A fact's _signature_ is the sorted list of
 dimensions it is broken down by. Grow holds both a programme total (signature `[]` = 793) and a hub
 breakdown (signature `["hub"]` = 402 + 236 + 155). Summing across signatures would report 1,586.
 Every aggregation therefore pins one exact signature — see `src/utils/dimensions.js` and
 `src/services/facts.service.js`.
 
 When no direct total exists, `resolveTotal` sums the finest available breakdown and returns
-`basis: "derived_from_breakdown"`, so the UI can show *how* a number was arrived at instead of
+`basis: "derived_from_breakdown"`, so the UI can show _how_ a number was arrived at instead of
 presenting a derived figure as a recorded one.
 
 ## Reading spreadsheets
@@ -67,23 +67,23 @@ Both workbooks were exported from Google Sheets, which wraps **every cell** as
 
 ## API
 
-| Method | Path | Role | Purpose |
-|---|---|---|---|
-| POST | `/api/v1/auth/login` | — | Sign in; returns access + refresh tokens |
-| POST | `/api/v1/auth/refresh` | — | Rotate a session |
-| GET | `/api/v1/auth/me` | any | Current user |
-| GET/POST/PUT | `/api/v1/auth/users` | admin | User management |
-| GET | `/api/v1/programs` | any | Programme tree (`?flat=true` for a list) |
-| GET | `/api/v1/programs/:pageKey` | any | One programme plus its metrics, for form generation |
-| GET | `/api/v1/metrics` | any | Metric catalog |
-| POST/PUT | `/api/v1/metrics` | editor | Extend the catalog without a deploy |
-| GET | `/api/v1/dimensions` | any | Dimension catalog with labels and aliases |
-| GET | `/api/v1/facts/aggregate` | any | Grouped values; `groupBy` pins the signature |
-| GET | `/api/v1/facts/total` | any | One headline number plus its `basis` |
-| GET | `/api/v1/facts/org-totals` | any | Overview figures, all derived |
-| GET | `/api/v1/facts/summary` | any | A whole programme page in one request |
-| GET | `/api/v1/facts/history` | any | Every revision behind one number |
-| POST | `/api/v1/facts` | editor | Manual entry (append-only) |
+| Method       | Path                        | Role   | Purpose                                             |
+| ------------ | --------------------------- | ------ | --------------------------------------------------- |
+| POST         | `/api/v1/auth/login`        | —      | Sign in; returns access + refresh tokens            |
+| POST         | `/api/v1/auth/refresh`      | —      | Rotate a session                                    |
+| GET          | `/api/v1/auth/me`           | any    | Current user                                        |
+| GET/POST/PUT | `/api/v1/auth/users`        | admin  | User management                                     |
+| GET          | `/api/v1/programs`          | any    | Programme tree (`?flat=true` for a list)            |
+| GET          | `/api/v1/programs/:pageKey` | any    | One programme plus its metrics, for form generation |
+| GET          | `/api/v1/metrics`           | any    | Metric catalog                                      |
+| POST/PUT     | `/api/v1/metrics`           | editor | Extend the catalog without a deploy                 |
+| GET          | `/api/v1/dimensions`        | any    | Dimension catalog with labels and aliases           |
+| GET          | `/api/v1/facts/aggregate`   | any    | Grouped values; `groupBy` pins the signature        |
+| GET          | `/api/v1/facts/total`       | any    | One headline number plus its `basis`                |
+| GET          | `/api/v1/facts/org-totals`  | any    | Overview figures, all derived                       |
+| GET          | `/api/v1/facts/summary`     | any    | A whole programme page in one request               |
+| GET          | `/api/v1/facts/history`     | any    | Every revision behind one number                    |
+| POST         | `/api/v1/facts`             | editor | Manual entry (append-only)                          |
 
 Roles: `admin` (everything, incl. user management and batch rollback), `editor` (enter data, run
 imports, edit the catalog), `viewer` (read only).
@@ -101,10 +101,10 @@ imports, edit the catalog), `viewer` (read only).
 
 Dimensions are **open** or **closed**:
 
-| | Axes | Behaviour |
-|---|---|---|
-| Open | hub, cohort, track, region, sector | An unseen value is added to the catalog automatically |
-| Closed | gender, enterprise_stage, platform, channel, post_type | An unseen value is rejected, listing what is valid |
+|        | Axes                                                   | Behaviour                                             |
+| ------ | ------------------------------------------------------ | ----------------------------------------------------- |
+| Open   | hub, cohort, track, region, sector                     | An unseen value is added to the catalog automatically |
+| Closed | gender, enterprise_stage, platform, channel, post_type | An unseen value is rejected, listing what is valid    |
 
 Cohorts keep being added, so capping the list at whatever was seeded would mean a developer had to
 extend it every intake. Entering "7" in the form — or importing a sheet containing it — creates
@@ -125,11 +125,11 @@ now, not as it was at preview time.
 
 **Three block layouts**, because both workbooks stack many small unrelated tables per sheet:
 
-| Layout | Shape | Example |
-|---|---|---|
-| `long` | one observation per row | Grow's `Hub / Total Learners` columns |
-| `crosstab` + `headerRole: period` | metrics down, periods across | the 2026 Consolidated sheet |
-| `crosstab` + `headerRole: none` | metric names down, one value column | the monthly per-channel totals |
+| Layout                            | Shape                               | Example                               |
+| --------------------------------- | ----------------------------------- | ------------------------------------- |
+| `long`                            | one observation per row             | Grow's `Hub / Total Learners` columns |
+| `crosstab` + `headerRole: period` | metrics down, periods across        | the 2026 Consolidated sheet           |
+| `crosstab` + `headerRole: none`   | metric names down, one value column | the monthly per-channel totals        |
 
 **Blocks are located by anchor, not by cell address.** The EdTech monthly sheets move their blocks
 between months — February puts `MEST TOTAL` at W6, March–November at V6, and the Citi FM block
@@ -137,6 +137,7 @@ drifts between rows 20 and 22. A fixed mapping would quietly read the wrong cell
 `crosstab.anchor` finds the label and derives the block from it. All 20 monthly blocks resolve.
 
 **Guards worth knowing about:**
+
 - A stated total in the sheet is never imported as a fact — it becomes a reconciliation check.
 - Two cells claiming the same coordinate with different values are reported as a conflict rather
   than last-write-wins.

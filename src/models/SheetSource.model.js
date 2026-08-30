@@ -59,6 +59,26 @@ const sheetSourceSchema = new mongoose.Schema(
     autoCommit: { type: Boolean, default: true },
     maxChangePercent: { type: Number, default: 10 },
 
+    /**
+     * How stale this source may get before viewing its programme pulls the
+     * sheet again, in minutes. Null — the default — means it refreshes only
+     * when the nightly job runs.
+     *
+     * Set on a source whose sheet is still being filled in: EdTech Mondays is
+     * a season in progress, and a figure that is a day old is the wrong figure
+     * to put in front of someone. The interval is a floor on how often the
+     * Sheets API is called, not a promise to call it that often — nobody
+     * looking at the page means nobody pulling the sheet.
+     */
+    refreshIntervalMinutes: { type: Number, default: null },
+
+    /**
+     * Set where this tab's blocks describe one figure between them rather than
+     * disjoint ones, so their candidates are combined before anything is
+     * compared or written. 'mean' for a rate, 'sum' for a count.
+     */
+    mergeBlocks: { type: String, enum: ['mean', 'sum', null], default: null },
+
     lastSyncedAt: { type: Date, default: null },
     lastStatus: { type: String, enum: STATUSES, default: 'never_run' },
     lastMessage: { type: String, trim: true, default: '' },

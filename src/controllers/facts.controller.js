@@ -3,6 +3,8 @@ const Metric = require('../models/Metric.model');
 const Dimension = require('../models/Dimension.model');
 const Fact = require('../models/Fact.model');
 const facts = require('../services/facts.service');
+const sheetSync = require('../services/sheetSync.service');
+const SheetSource = require('../models/SheetSource.model');
 const submissions = require('../services/submissions.service');
 const { sendSuccess, sendError, ERROR_CODES } = require('../utils/response');
 const { buildPeriod } = require('../utils/period');
@@ -99,32 +101,105 @@ async function getOrgTotals(req, res, next) {
   }
 }
 
+/**
+ * What to tell the reader about how fresh these figures are.
+ *
+ * Only for programmes fed by a source that refreshes on read. Everything else
+ * returns null and the page says nothing, which is right: a figure typed in by
+ * hand has no "last updated from the sheet" to report.
+ */
+async function liveStatus(programIds, refresh) {
+  const sources = await SheetSource.find({
+    program: { $in: programIds },
+    isEnabled: true,
+    refreshIntervalMinutes: { $gt: 0 },
+  })
+    .select('tabName lastSyncedAt lastStatus refreshIntervalMinutes')
+    .lean();
+
+  if (sources.length === 0) return null;
+
+  // The oldest source is the one that bounds how current the page is.
+  const oldest = sources.reduce(
+    (worst, s) =>
+      !worst || !s.lastSyncedAt || (worst.lastSyncedAt && s.lastSyncedAt < worst.lastSyncedAt) ? s : worst,
+    null
+  );
+
+  return {
+    syncedAt: oldest?.lastSyncedAt ?? null,
+    status: oldest?.lastStatus ?? 'never_run',
+    everyMinutes: Math.min(...sources.map((s) => s.refreshIntervalMinutes)),
+    sources: sources.map((s) => s.tabName),
+    // True when a refresh was still running when the page was built, so these
+    // figures are the previous read rather than this one.
+    pending: Boolean(refresh?.stale),
+  };
+}
+
 /** GET /api/v1/facts/summary — everything one programme page needs, in one call. */
+/**
+ * A navigation node that is a year rather than a programme.
+ *
+ * The catalog seeds "2026" under AI Startup Lab and EdTech Mondays as a period
+ * filter, not a separate programme — facts attach to the parent and are sliced
+ * by period when they are read. This is where that slicing happens. Without it
+ * the year page asks for figures recorded against a node that by design holds
+ * none, and shows an empty programme sitting under a full one.
+ */
+async function resolveYearNode(program) {
+  if (program.isReportable || !/^\d{4}$/.test(program.name)) return null;
+
+  // The nearest ancestor that actually holds figures.
+  const ancestors = await Program.find({ _id: { $in: program.ancestors } }).sort({ depth: -1 }).lean();
+  const holder = ancestors.find((a) => a.isReportable);
+  if (!holder) return null;
+
+  return { holder, year: Number(program.name) };
+}
+
 async function getSummary(req, res, next) {
   try {
-    const program = await findProgramOr404(res, req.query.program);
-    if (!program) return;
+    const requested = await findProgramOr404(res, req.query.program);
+    if (!requested) return;
+
+    const yearNode = await resolveYearNode(requested);
+    const program = yearNode ? yearNode.holder : requested;
+    const year = yearNode ? yearNode.year : req.query.year;
 
     // Container nodes hold no facts of their own, so they roll up their children.
     const includeDescendants = req.query.includeDescendants === 'true' || !program.isReportable;
 
-    const [summary, years] = await Promise.all([
-      facts.programSummary({ programId: program._id, includeDescendants, year: req.query.year }),
-      facts.availableYears({ programId: program._id, includeDescendants }),
+    const programIds = await facts.resolveProgramIds(program._id, { includeDescendants });
+
+    // A source with a freshness window is re-read before the page is built, so
+    // a sheet still being filled in shows what it says now. Sources without one
+    // are untouched, and a refresh that fails or runs long never blocks the
+    // page — the stored figures are served instead.
+    const refresh = await sheetSync.refreshIfStale({ programIds });
+
+    const [summary, years, live] = await Promise.all([
+      facts.programSummary({ programIds, includeDescendants, year }),
+      facts.availableYears({ programIds }),
+      liveStatus(programIds, refresh),
     ]);
 
     sendSuccess(res, 200, {
       data: {
         program: {
-          id: program.id,
-          pageKey: program.pageKey,
-          name: program.name,
-          description: program.description,
-          isReportable: program.isReportable,
+          id: requested.id,
+          pageKey: requested.pageKey,
+          // A year page is titled by what it reports on, not by the bare year.
+          name: yearNode ? `${program.name} — ${yearNode.year}` : requested.name,
+          description: requested.description ?? (yearNode ? program.description : null),
+          isReportable: requested.isReportable,
+          allowsManualEntry: (yearNode ? program : requested).allowsManualEntry !== false,
         },
         rolledUp: includeDescendants,
-        availableYears: years,
+        // A year page reports one year, so the period control offers only it.
+        availableYears: yearNode ? [yearNode.year] : years,
         metrics: summary.metrics,
+        live,
       },
     });
   } catch (err) {
@@ -308,13 +383,18 @@ async function listFacts(req, res, next) {
 
     const limit = Math.min(Number(req.query.limit ?? 200), 1000);
 
-    const rows = await Fact.find(filter)
+    const query = Fact.find(filter)
       .sort({ periodStart: 1, dimensionKey: 1 })
       .limit(limit)
       .populate('program', 'pageKey name')
-      .populate('metric', 'key label unit')
-      .populate('enteredBy', 'firstName lastName')
-      .lean();
+      .populate('metric', 'key label unit');
+
+    // The figures are public; who typed them in is not. An anonymous caller
+    // gets the numbers with the name left off rather than a refusal.
+    if (req.user) query.populate('enteredBy', 'firstName lastName');
+
+    const rows = await query.lean();
+    if (!req.user) for (const row of rows) delete row.enteredBy;
 
     sendSuccess(res, 200, { data: { facts: rows }, meta: { count: rows.length, limit } });
   } catch (err) {

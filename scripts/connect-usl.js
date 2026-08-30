@@ -42,8 +42,11 @@ const tally = (name, first, last, columns, fixedDimensions = {}) => ({
 });
 
 // The cohort table repeats its header once per cohort, so the six figures sit on
-// six scattered rows rather than in one run. Each is read on its own.
-const COHORT_ROWS = { 1: 30, 2: 35, 3: 40, 4: 45, 5: 49, 6: 52 };
+// six scattered rows rather than in one run. Each is read on its own, and each
+// is checked below against the label the sheet writes beside it — cohort 6 has
+// already moved down a row once, and a mapping addressing cells by number finds
+// nothing rather than failing when that happens.
+const COHORT_ROWS = { 1: 30, 2: 35, 3: 40, 4: 45, 5: 49, 6: 53 };
 
 const BLOCKS = [
   tally('Startups supported', 2, 2, [val('B', 'enterprises_total')]),
@@ -66,12 +69,34 @@ const BLOCKS = [
   ]),
 ];
 
+/** A cell inside each block, so a table that moves is caught by name. */
+const ANCHORS = [
+  ['A2', 'Total Startups'], ['H2', 'Gender Breakdown of Co-founders'],
+  ['L2', 'Cuurent Status'], ['O2', 'Portfolio Type'],
+  ['H3', 'Female'], ['H4', 'Male'], ['L3', 'Active'], ['O3', 'Scaling'],
+  ['A11', 'Industry/ Sector'], ['A12', 'Health & Nutrition'], ['A23', 'Skills, Employment & Human Capital'],
+  ['H11', 'Employees Count'], ['H12', 'Full time'], ['H13', 'Part time'],
+  ['D12', 'Schools'], ['D14', 'Total Users/Customers'],
+  ['L11', 'Yes'], ['L12', 'No'], ['L13', 'N/A'],
+  ...Object.entries(COHORT_ROWS).map(([cohort, row]) => [`A${row}`, `Cohort ${cohort}`]),
+];
+
 (async () => {
   await mongoose.connect(env.MONGODB_URI);
   const program = await Program.findOne({ pageKey: PROGRAM });
   if (!program) throw new Error(`Programme "${PROGRAM}" not found.`);
 
   const description = await sheets.describe(SPREADSHEET_ID);
+  const probe = await sheets.loadWorksheet({ spreadsheetId: SPREADSHEET_ID, tabName: TAB });
+  const read = (a) => { const c = probe.getCell(a); return String((c && typeof c === 'object' ? c.value ?? c.text : c) ?? '').trim(); };
+
+  const drift = ANCHORS.filter(([a, t]) => read(a) !== t).map(([a, t]) => `${a} reads "${read(a)}", expected "${t}"`);
+  if (drift.length) {
+    console.error('The sheet has been restructured — stopping rather than importing into the wrong coordinates:');
+    drift.forEach((d) => console.error(`  · ${d}`));
+    process.exit(1);
+  }
+
   const admin = await User.findOne({ role: 'admin' }).sort({ createdAt: 1 });
 
   const source = await SheetSource.findOneAndUpdate(

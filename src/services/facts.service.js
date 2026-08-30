@@ -299,8 +299,15 @@ async function resolveTotalCore({ programIds, metric, periodType, year, from, to
   }
 
   // Prefer the breakdown with the fewest dimensions — it is the closest thing
-  // to a total that the data actually contains.
-  const finest = [...available].sort((a, b) => a.length - b.length)[0];
+  // to a total that the data actually contains. Several can tie: EdTech Mondays
+  // reports its season by channel and again by platform. They are alternative
+  // views, so exactly one is chosen, and the choice is settled by name rather
+  // than by whatever order the database happened to return — a headline that
+  // flips between two readings of the same season between page loads is worse
+  // than either reading.
+  const finest = [...available].sort(
+    (a, b) => a.length - b.length || signatureKey(a).localeCompare(signatureKey(b))
+  )[0];
 
   const derived = await aggregateCore({
     programIds, metric, groupBy: finest, periodType, year, from, to,
@@ -381,6 +388,18 @@ async function orgFigures({ metrics, year, from, to }) {
   const programs = await Program.find({ isReportable: true, isArchived: false })
     .select('_id name pageKey')
     .lean();
+  return rollUp({ programs, metrics, year, from, to });
+}
+
+/**
+ * The reduction itself, over whichever programmes the caller names.
+ *
+ * `orgFigures` runs it over every reportable programme for the Overview; a
+ * roll-up page runs it over one branch of the tree. The rule is the same either
+ * way and has to be: a branch total that disagreed with the organisation total
+ * built from the same programmes would make one of the two wrong.
+ */
+async function rollUp({ programs, metrics, year, from, to }) {
   const programIds = programs.map((p) => p._id);
   const programById = new Map(programs.map((p) => [String(p._id), p]));
 
@@ -526,9 +545,34 @@ async function orgTotals({ year, from, to, headlineOnly = true } = {}) {
  * Built from the signatures present in the data rather than from the metric's
  * allowed list, so a page only ever renders breakdowns that exist.
  */
-async function programSummary({ programId, includeDescendants = false, year }) {
-  const programIds = await resolveProgramIds(programId, { includeDescendants });
+async function programSummary({ programId, programIds: resolved, includeDescendants = false, year }) {
+  const programIds = resolved ?? (await resolveProgramIds(programId, { includeDescendants }));
   const baseMatch = { isCurrent: true, program: { $in: programIds }, ...periodFilter({ year }) };
+
+  /**
+   * The programmes actually holding figures under this page.
+   *
+   * A page covering more than one of them cannot read its headline out of the
+   * combined facts: only some programmes record a standalone total, so the
+   * signature-`[]` bucket is the sum of those few and silently omits the rest.
+   * Venture Support read 270 enterprises that way against a real 620, because
+   * UNDP-YAI and Absa report theirs by hub and by region and neither states a
+   * bare total.
+   *
+   * So the headline is reduced the same way the Overview reduces it: one figure
+   * per programme, then added. The breakdowns below still come from the
+   * combined facts, which is right — a breakdown is whatever was recorded on
+   * that axis, and the coverage note says when it falls short of the headline.
+   */
+  const reduction = (async () => {
+    const [holders, allMetrics] = await Promise.all([
+      Program.find({ _id: { $in: programIds }, isReportable: true, isArchived: false })
+        .select('_id name pageKey')
+        .lean(),
+      Metric.find({ isArchived: false }).select('_id key aggregation').lean(),
+    ]);
+    return rollUp({ programs: holders, metrics: allMetrics, year });
+  })();
 
   // Two pipelines compute the whole page.
   //
@@ -537,7 +581,11 @@ async function programSummary({ programId, includeDescendants = false, year }) {
   // as it does in `aggregateCore` — while collapsing what was ~60 sequential
   // round trips (one per metric per breakdown) into two. On a hosted database
   // that is the difference between a 4-second page and a fast one.
-  const [rawCombined, monthly] = await Promise.all([
+  // The reduction reads the same facts as the two pipelines below, so it runs
+  // beside them rather than after them — on a hosted database the round trip
+  // costs more than the query.
+  const [rolled, rawCombined, monthly] = await Promise.all([
+    reduction,
     Fact.aggregate([
       { $match: baseMatch },
       {
@@ -613,8 +661,6 @@ async function programSummary({ programId, includeDescendants = false, year }) {
       const buckets = bucket(combined, metric._id);
       const monthlyBuckets = bucket(monthly, metric._id);
 
-      const totalBucket = buckets.get('');
-
       // One and two-dimension breakdowns are both shown. Restricting this to a
       // single dimension hid most of what Grow records: its cohorts only ever
       // exist paired with a hub, so a cohort breakdown has signature
@@ -625,24 +671,25 @@ async function programSummary({ programId, includeDescendants = false, year }) {
 
       const singleDimension = shownBreakdowns.filter((b) => b.signature.length === 1);
 
-      // Same precedence as resolveTotal: a recorded total wins; otherwise sum
-      // the finest breakdown and say so.
-      let total = null;
+      // One figure per programme, added — see `holders` above. For a page
+      // covering a single programme this is the same precedence as before: its
+      // recorded total when it has one, otherwise its finest breakdown.
+      const figure = rolled.get(String(metric._id));
+      const contributions = figure?.contributions ?? [];
+
+      let total = figure?.total ?? null;
       let basis = 'no_data';
       let derivedFrom = null;
 
-      if (totalBucket) {
-        total = readValue(totalBucket.rows[0], metric);
-        basis = 'recorded_total';
-      } else {
-        const finest = [...buckets.values()].sort((a, b) => a.signature.length - b.signature.length)[0];
-        if (finest) {
-          const values = finest.rows.map((r) => readValue(r, metric));
-          const summed = values.reduce((sum, v) => sum + v, 0);
-          total = metric.aggregation === 'avg' ? summed / values.length : summed;
-          basis = 'derived_from_breakdown';
-          derivedFrom = finest.signature;
-        }
+      if (total !== null) {
+        const derived = contributions.filter((c) => c.basis === 'derived_from_breakdown');
+        basis = derived.length === 0
+          ? 'recorded_total'
+          : contributions.length === 1
+            ? 'derived_from_breakdown'
+            : 'partly_derived';
+        // Only one programme, so there is a single breakdown to name.
+        if (contributions.length === 1) derivedFrom = contributions[0].derivedFrom ?? null;
       }
 
       const trendBucket =
@@ -658,6 +705,9 @@ async function programSummary({ programId, includeDescendants = false, year }) {
         total,
         basis,
         derivedFrom,
+        // How many programmes stand behind the figure, so a roll-up page can
+        // say so rather than reading as one programme's number.
+        programCount: contributions.length,
         breakdowns: shownBreakdowns.map((b) => ({
           dimension: b.signature[0],
           dimensions: b.signature,
@@ -675,9 +725,12 @@ async function programSummary({ programId, includeDescendants = false, year }) {
 }
 
 /** Years that have data, for the period selector. */
-async function availableYears({ programId, includeDescendants = false } = {}) {
+async function availableYears({ programId, programIds, includeDescendants = false } = {}) {
   const match = { isCurrent: true, year: { $ne: null } };
-  if (programId) match.program = { $in: await resolveProgramIds(programId, { includeDescendants }) };
+  // The caller usually resolved the tree already; re-walking it costs a round
+  // trip to the database for an answer it is holding.
+  const ids = programIds ?? (programId ? await resolveProgramIds(programId, { includeDescendants }) : null);
+  if (ids) match.program = { $in: ids };
 
   const rows = await Fact.aggregate([
     { $match: match },

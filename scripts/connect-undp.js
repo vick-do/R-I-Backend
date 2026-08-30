@@ -3,19 +3,26 @@
  *
  *   node scripts/connect-undp.js [--dry-run]
  *
- * The tab is a wall of pivot tables built off one innovator database. Four of
- * them are read here, chosen because between them they cover every axis the
- * pivots actually agree on: jobs by hub, by gender, by programme stage, and by
- * hub × gender; revenue by hub; and the innovator count by hub.
+ * The tab is a wall of pivot tables built off one innovator database. What it
+ * reports is jobs and revenue: jobs by hub, by gender, by programme stage and
+ * by hub × gender — all four agreeing at 1,372 — and total revenue by hub.
  *
- * Two pivots count innovators and disagree — 141 across eight hubs, 160 across
- * nine. The second is the one read, because it is the only one that includes
- * MEST's own four innovators, and its per-hub figures are equal or higher
- * everywhere else. The 141 pivot looks like an earlier run left in place.
+ * It used to carry two pivots counting innovators, and this script used to read
+ * one of them as `enterprises_total`. Both have since been deleted from the
+ * sheet, which now ends at row 100. The programme therefore states no count of
+ * the ventures it supports, and none is recorded: an enterprise figure with
+ * nothing behind it is worse than an absent one. If that count is wanted back,
+ * it needs to come back to the sheet first.
  *
- * The Q1 revenue pivots are deliberately not imported: Q1 revenue is part of the
- * total revenue also reported here, and the two have no period axis to keep
- * them apart, so importing both would count the same money twice.
+ * Also not imported, deliberately:
+ *   · the Q1 revenue pivots — Q1 revenue is part of the total revenue reported
+ *     here, and the two have no period axis to keep them apart, so importing
+ *     both would count the same money twice;
+ *   · the per-stage jobs pivots repeated at rows 15–25 and 30–40, which restate
+ *     rows 4–11 broken out by hub. Reading them as well would put the same
+ *     1,372 jobs on a third axis for no gain;
+ *   · the Direct Jobs table at rows 96–100, which the sheet cuts off after four
+ *     of its nine hubs.
  */
 require('../src/config/env');
 const mongoose = require('mongoose');
@@ -45,6 +52,20 @@ const tally = (name, first, last, columns, fixedDimensions = {}) => ({
 
 // The hub axis of the gender pivot runs across columns G–O of row 6, in this
 // order. Checked against the sheet's own header row before anything is written.
+/**
+ * A cell inside each block, checked before anything is written.
+ *
+ * Every one of these sits in a range a block reads, so a table that moves or is
+ * deleted is caught here by name rather than discovered later as a figure that
+ * quietly stopped changing.
+ */
+const ANCHOR_CELLS = [
+  ['B3', 'Stage'], ['C3', 'SUM of Total Jobs'], ['B4', '1 Cohort 1'], ['B11', '3 Pilot'],
+  ['F5', 'SUM of Total Jobs'], ['G5', 'Hub'], ['F6', 'Gender'], ['P6', 'Grand Total'],
+  ['B69', 'Hub'], ['C69', 'SUM of Total Jobs'], ['D69', 'SUM of Total Revenue'],
+  ['B70', 'AFRIDELF'], ['B78', 'Wan-Hive'],
+];
+
 const HUB_COLUMNS = [
   ['G', 'AFRIDELF'], ['H', 'Agrico Hub'], ['I', 'Behive'], ['J', 'Fab Hub Ashanti'],
   ['K', 'Green Growth Africa'], ['L', 'Innovators Up'], ['M', 'MEST'], ['N', 'SIASD'], ['O', 'Wan-Hive'],
@@ -55,7 +76,6 @@ const BLOCKS = [
   tally('Jobs by programme stage', 4, 11, [dim('B', 'program_stage'), val('C', 'jobs_created')]),
   tally('Jobs by hub', 70, 78, [dim('B', 'hub'), val('C', 'jobs_created')]),
   tally('Revenue by hub', 70, 78, [dim('B', 'hub'), val('D', 'revenue')]),
-  tally('Innovators by hub', 118, 126, [dim('E', 'hub'), val('F', 'enterprises_total')]),
   ...GENDER_ROWS.map(([row, gender]) =>
     tally(`Jobs — ${gender}`, row, row, [val('P', 'jobs_created')], { gender })),
 
@@ -80,7 +100,8 @@ const BLOCKS = [
   const cell = (a) => { const c = worksheet.getCell(a); return String((c && typeof c === 'object' ? c.value ?? c.text : c) ?? '').trim(); };
   const drift = HUB_COLUMNS.filter(([col, hub]) => cell(`${col}6`) !== hub)
     .map(([col, hub]) => `${col}6 reads "${cell(`${col}6`)}", expected "${hub}"`)
-    .concat(GENDER_ROWS.filter(([row, g]) => cell(`F${row}`).toLowerCase() !== g).map(([row, g]) => `F${row} is not ${g}`));
+    .concat(GENDER_ROWS.filter(([row, g]) => cell(`F${row}`).toLowerCase() !== g).map(([row, g]) => `F${row} is not ${g}`))
+    .concat(ANCHOR_CELLS.filter(([a, t]) => cell(a) !== t).map(([a, t]) => `${a} reads "${cell(a)}", expected "${t}"`));
   if (drift.length) {
     console.error('The sheet has been restructured — stopping rather than importing into the wrong coordinates:');
     drift.forEach((d) => console.error(`  · ${d}`));

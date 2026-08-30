@@ -109,6 +109,9 @@ async function main() {
   // alternative views of one programme, never parts of it.
   await write({ program: web3, metric: learners, period: { periodType: 'all_time' }, dimensions: { hub: 'accra' }, value: 30 });
   await write({ program: web3, metric: learners, period: { periodType: 'all_time' }, dimensions: { hub: 'plugin' }, value: 8 });
+  // The two splits are the same size here, so a headline that flips between
+  // them is invisible. Make them differ, so choosing one at random shows.
+  await write({ program: web3, metric: learners, period: { periodType: 'all_time' }, dimensions: { track: 'web-development' }, value: 37 });
 
   check('Grow holds a total and a hub breakdown of equal size', true);
   check('Web3 holds two tied splits of the same 38 people and no total', true);
@@ -155,6 +158,76 @@ async function main() {
     `got ${orgLearners.programCount}`);
   check('Compare names the single split it derived Web3 from', web3Row?.derivedFrom?.length === 1,
     JSON.stringify(web3Row?.derivedFrom));
+
+  // ---------------------------------------------------- a year page
+  //
+  // "2026" under AI Startup Lab is a period filter in the navigation, not a
+  // programme. It holds no figures of its own by design, so a page that asks it
+  // for figures directly shows an empty programme sitting under a full one.
+  section('A year node reports its parent, sliced to that year');
+
+  const yearPage = await request('GET', '/api/v1/facts/summary?program=ai-startup-lab-2026', { token });
+  check('The year page responds 200', yearPage.status === 200, `got ${yearPage.status}`);
+  check('It is titled by what it reports on, not the bare year',
+    yearPage.body.data?.program.name === 'AI Startup Lab — 2026', yearPage.body.data?.program.name);
+  check('It offers only its own year', JSON.stringify(yearPage.body.data?.availableYears) === '[2026]',
+    JSON.stringify(yearPage.body.data?.availableYears));
+  check('It keeps the year node\'s own page key, so the nav stays put',
+    yearPage.body.data?.program.pageKey === 'ai-startup-lab-2026', yearPage.body.data?.program.pageKey);
+
+  const emptyYear = await request('GET', '/api/v1/facts/summary?program=ai-startup-lab-2027', { token });
+  check('A year with nothing recorded is empty rather than borrowing another year',
+    emptyYear.body.data?.metrics.length === 0, String(emptyYear.body.data?.metrics.length));
+
+  // ------------------------------------------------- a stable choice of split
+  //
+  // Web3 now holds three single-dimension splits that disagree slightly. Which
+  // one becomes the headline must not depend on the order the database happens
+  // to return them in, or the same figure reads differently between two loads
+  // of the same page.
+  section('Tied splits are chosen by name, not by luck');
+
+  const readings = [];
+  for (let i = 0; i < 4; i += 1) {
+    const page = await request('GET', '/api/v1/facts/summary?program=digital-skills-web3', { token });
+    const metric = page.body.data?.metrics.find((m) => m.key === 'learners_total');
+    readings.push(`${metric?.total}:${JSON.stringify(metric?.derivedFrom)}`);
+  }
+  check('Four reads of the same page give the same figure', new Set(readings).size === 1,
+    [...new Set(readings)].join(' | '));
+  check('And it names the split it came from', /\[".+"\]/.test(readings[0]), readings[0]);
+
+  // -------------------------------------------------------- a roll-up page
+  //
+  // Digital Skills is a container: it holds no figures of its own and reports
+  // the programmes beneath it. Reading its headline out of the combined facts
+  // counts only the programmes that recorded a standalone total — Web3 records
+  // just a gender split, so its 38 learners vanished. Venture Support read 270
+  // enterprises that way against a real 620.
+  section('A roll-up page adds one figure per programme');
+
+  const branch = await request('GET', '/api/v1/facts/summary?program=digital-skills', { token });
+  check('The container page responds 200', branch.status === 200, `got ${branch.status}`);
+
+  const branchLearners = branch.body.data?.metrics.find((m) => m.key === 'learners_total');
+  check('It totals 1,592 — the three programmes, not just the two with totals',
+    branchLearners?.total === 1592, String(branchLearners?.total));
+  check('It counts all three as contributors', branchLearners?.programCount === 3,
+    String(branchLearners?.programCount));
+  check('And says the figure is partly derived, because one programme has no total',
+    branchLearners?.basis === 'partly_derived', branchLearners?.basis);
+
+  check('The branch agrees with the Overview built from the same programmes',
+    branchLearners?.total === orgLearners.value, `${branchLearners?.total} vs ${orgLearners.value}`);
+
+  // A page covering one programme keeps naming the breakdown it derived from.
+  const single = await request('GET', '/api/v1/facts/summary?program=digital-skills-web3', { token });
+  const singleLearners = single.body.data?.metrics.find((m) => m.key === 'learners_total');
+  check('A single-programme page still reports one contributor',
+    singleLearners?.programCount === 1, String(singleLearners?.programCount));
+  check('And still names the split it derived from',
+    singleLearners?.basis === 'derived_from_breakdown' && singleLearners?.derivedFrom?.length === 1,
+    JSON.stringify({ basis: singleLearners?.basis, from: singleLearners?.derivedFrom }));
 
   // ------------------------------------------------------- grouped compare
   section('Compare grouped by a dimension');
@@ -254,8 +327,17 @@ async function main() {
 
   // ------------------------------------------------------------------ auth
   section('Access');
+  // Insights are derived views of public figures, so they are public too. The
+  // one exception is data quality, which reports on how the figures were
+  // assembled rather than on what MEST did.
   const anonymous = await request('GET', '/api/v1/insights/scorecard');
-  check('Insights require a signed-in user', anonymous.status === 401, `got ${anonymous.status}`);
+  check('Insights are public', anonymous.status === 200, `got ${anonymous.status}`);
+  check('And carry real figures for an anonymous reader',
+    (anonymous.body.data?.totals ?? []).some((t) => t.value !== null),
+    JSON.stringify((anonymous.body.data?.totals ?? []).map((t) => t.value)));
+
+  const anonQuality = await request('GET', '/api/v1/insights/data-quality');
+  check('Data quality is not', anonQuality.status === 401, `got ${anonQuality.status}`);
 
   const unknownMetric = await request('GET', '/api/v1/insights/compare?metric=not_a_metric', { token });
   check('An unknown metric is a 404', unknownMetric.status === 404, `got ${unknownMetric.status}`);

@@ -73,7 +73,7 @@ async function main() {
   const programCount = await Program.countDocuments();
   const metricCount = await Metric.countDocuments();
   check(`Seeded ${programCount} programmes covering the whole nav tree`, programCount === 28, `got ${programCount}`);
-  check(`Seeded ${metricCount} metrics`, metricCount === 30, `got ${metricCount}`);
+  check(`Seeded ${metricCount} metrics`, metricCount === 34, `got ${metricCount}`);
 
   const headline = await Metric.find({ headlineOrder: { $ne: null } }).sort({ headlineOrder: 1 });
   check('Seven headline metrics, in reporting order',
@@ -105,8 +105,58 @@ async function main() {
   check('Admin can sign in', login.status === 200 && !!login.body.data.accessToken);
   const adminToken = login.body.data.accessToken;
 
-  const anon = await request('GET', '/api/v1/facts/org-totals');
-  check('Unauthenticated reads are refused', anon.status === 401);
+  // ------------------------------------------------------ the public boundary
+  //
+  // The impact record is public: anyone can read what MEST has done without an
+  // account. Everything about the people who run it, and every way of changing
+  // it, still needs signing in for. These two lists are the boundary, and a
+  // route moving between them should have to move here first.
+  section('What the public can read');
+
+  for (const path of [
+    '/api/v1/programs',
+    '/api/v1/metrics',
+    '/api/v1/dimensions',
+    '/api/v1/facts/org-totals',
+    '/api/v1/facts/summary?program=digital-skills-grow',
+    '/api/v1/insights/scorecard',
+    '/api/v1/insights/funnel',
+    '/api/v1/insights/compare?metric=learners_total',
+  ]) {
+    const open = await request('GET', path);
+    check(`Public: ${path.split('?')[0]}`, open.status === 200, `got ${open.status}`);
+  }
+
+  section('What the public cannot');
+
+  for (const path of [
+    '/api/v1/auth/users',
+    '/api/v1/audit',
+    '/api/v1/submissions',
+    '/api/v1/sheets',
+    '/api/v1/imports',
+    '/api/v1/insights/data-quality',
+    '/api/v1/facts/history?program=digital-skills-grow&metric=learners_total',
+  ]) {
+    const shut = await request('GET', path);
+    check(`Refused: ${path.split('?')[0]}`, shut.status === 401, `got ${shut.status}`);
+  }
+
+  const anonWrite = await request('POST', '/api/v1/facts', { body: { value: 1 } });
+  check('Nobody can write without an account', anonWrite.status === 401, `got ${anonWrite.status}`);
+
+  // A public endpoint serves the reader rather than arguing about their token.
+  const stale = await request('GET', '/api/v1/facts/org-totals', { token: 'not-a-real-token' });
+  check('An expired session still sees the public figures', stale.status === 200, `got ${stale.status}`);
+  const staleGuarded = await request('GET', '/api/v1/audit', { token: 'not-a-real-token' });
+  check('…but not the guarded ones', staleGuarded.status === 401, `got ${staleGuarded.status}`);
+
+  // The figures are public; who typed them in is not.
+  const anonFacts = await request('GET', '/api/v1/facts?limit=5');
+  check('The raw fact list is public', anonFacts.status === 200, `got ${anonFacts.status}`);
+  check('…with no staff name attached to any of it',
+    (anonFacts.body.data?.facts ?? []).every((f) => !('enteredBy' in f)),
+    JSON.stringify((anonFacts.body.data?.facts ?? []).map((f) => f.enteredBy).filter(Boolean)));
 
   await User.create({
     firstName: 'Read', lastName: 'Only', email: 'viewer@mest.local',
