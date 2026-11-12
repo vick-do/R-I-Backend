@@ -23,6 +23,12 @@ function validateEnv() {
 
 validateEnv();
 
+// A browser's Origin header never ends in "/", so an origin saved with one
+// (e.g. "https://app.netlify.app/") would never match and every request would
+// fail CORS. Several origins can be given, comma-separated.
+const stripSlash = (url) => url.trim().replace(/\/+$/, '');
+const CORS_ORIGINS = process.env.CORS_ORIGIN.split(',').map(stripSlash).filter(Boolean);
+
 const env = {
   NODE_ENV: process.env.NODE_ENV,
   PORT: parseInt(process.env.PORT, 10),
@@ -32,10 +38,10 @@ const env = {
   JWT_ACCESS_EXPIRES_IN: process.env.JWT_ACCESS_EXPIRES_IN,
   JWT_REFRESH_EXPIRES_IN: process.env.JWT_REFRESH_EXPIRES_IN,
   BCRYPT_SALT_ROUNDS: parseInt(process.env.BCRYPT_SALT_ROUNDS, 10),
-  CORS_ORIGIN: process.env.CORS_ORIGIN,
-  // Where invite links point. Defaults to the dashboard origin, which is the
-  // same host in every deployment so far.
-  APP_URL: process.env.APP_URL ?? process.env.CORS_ORIGIN,
+  CORS_ORIGINS,
+  // Where invite links point. Defaults to the first dashboard origin, which is
+  // the same host in every deployment so far.
+  APP_URL: stripSlash(process.env.APP_URL ?? CORS_ORIGINS[0]),
   INVITE_EXPIRY_DAYS: parseInt(process.env.INVITE_EXPIRY_DAYS ?? '7', 10),
   UPLOAD_MAX_BYTES: parseInt(process.env.UPLOAD_MAX_BYTES ?? '26214400', 10),
   SEED_ADMIN_EMAIL: process.env.SEED_ADMIN_EMAIL,
