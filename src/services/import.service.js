@@ -525,13 +525,27 @@ async function extractCrosstab({
    * `headerRole: 'dimension'` already does for the column axis.
    */
   const labelIsDimension = ct.labelRole === 'dimension';
+  /**
+   * `labelRole: 'none'` — the block is one metric and the row label is only a
+   * restatement of it, so the metric is fixed and the label ignored.
+   *
+   * The AI Startup sheet needs this: its General and Team satisfaction rows
+   * are both labelled plainly "Satisfaction", and what tells them apart is the
+   * heading two rows above each. Matching on the label would read both into
+   * whichever metric claims that alias, which is how two different series end
+   * up fighting over one coordinate.
+   */
+  const labelIsFixed = ct.labelRole === 'none';
   const labelDimension = labelIsDimension ? dimensionIndex.get(ct.labelDimension) : null;
-  const fixedMetric = labelIsDimension ? metricIndex.get(normalizeLabel(ct.metric ?? '')) : null;
+  const fixedMetric =
+    labelIsDimension || labelIsFixed ? metricIndex.get(normalizeLabel(ct.metric ?? '')) : null;
 
-  if (labelIsDimension && !fixedMetric) {
+  if ((labelIsDimension || labelIsFixed) && !fixedMetric) {
     issues.push({
       severity: 'error',
-      message: `A cross-tab whose rows are ${ct.labelDimension} values needs a metric of its own; "${ct.metric}" matched none.`,
+      message: labelIsDimension
+        ? `A cross-tab whose rows are ${ct.labelDimension} values needs a metric of its own; "${ct.metric}" matched none.`
+        : `A cross-tab that ignores its row labels needs a metric of its own; "${ct.metric}" matched none.`,
     });
     return;
   }
@@ -549,6 +563,8 @@ async function extractCrosstab({
       if (!value) continue; // A heading rather than a row of data.
       metric = fixedMetric;
       rowDimensions = { [ct.labelDimension]: value };
+    } else if (labelIsFixed) {
+      metric = fixedMetric;
     } else {
       metric = metricIndex.get(normalizeLabel(label));
     }

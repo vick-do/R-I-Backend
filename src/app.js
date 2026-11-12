@@ -1,4 +1,12 @@
 require('./config/env'); // Must be first — validates env vars
+// Use public DNS servers early so SRV/TXT lookups used by mongodb+srv
+// resolve reliably on networks that block or misroute DNS queries.
+try {
+  const dns = require('dns');
+  dns.setServers(['8.8.8.8', '1.1.1.1']);
+} catch (e) {
+  // If for some reason dns can't be required, continue — the app still runs.
+}
 const express = require('express');
 const helmet = require('helmet');
 const cors = require('cors');

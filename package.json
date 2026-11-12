@@ -4,7 +4,7 @@
   "description": "MEST Africa Research & Impact — impact data platform API",
   "main": "src/app.js",
   "scripts": {
-    "dev": "nodemon src/app.js",
+    "dev": "node node_modules/nodemon/bin/nodemon.js src/app.js",
     "start": "node src/app.js",
     "seed": "node src/seeds/seed.js",
     "backfill": "node src/seeds/backfill.js",

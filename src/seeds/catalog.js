@@ -16,27 +16,65 @@
 // Year nodes ("2026", "2027") are navigation-level period filters, not separate
 // programmes. They are seeded as non-reportable so facts always attach to the
 // parent programme and are sliced by period at read time.
+/**
+ * The ten figures every Venture Support page leads with.
+ *
+ * One row, the same on the roll-up and on each programme under it, so a
+ * reader moving between them compares like with like instead of re-reading a
+ * different set of cards on every page. A programme that has not reported one
+ * of them shows it empty, which is itself worth knowing.
+ */
+const VENTURE_SUPPORT_CARDS = [
+  'enterprises_total', 'jobs_created', 'edtech_learners_impacted', 'educators_trained',
+  'users_reached', 'institutions_reached', 'employees_hired', 'partnerships',
+  'revenue', 'monthly_revenue',
+];
+
 const programs = [
   { pageKey: 'overview', name: 'Overview', category: 'container', isReportable: false },
 
   { pageKey: 'ai-startup-lab', name: 'AI Startup Lab', category: 'lab',
-    metricKeys: ['satisfaction', 'skill_confidence_before', 'skill_confidence_after'], allowsManualEntry: false,
-    description: 'Monthly satisfaction and before-and-after skill confidence across the Tech, Business and Product disciplines.' },
+    metricKeys: [
+      'people_trained',
+      'satisfaction_general', 'satisfaction_team', 'satisfaction',
+      'skill_confidence_before', 'skill_confidence_after',
+    ], allowsManualEntry: false,
+    description: 'Monthly satisfaction (general, team and by track) and before-and-after skill confidence across the Tech, Business and Product disciplines.' },
   { pageKey: 'ai-startup-lab-2026', name: '2026', parent: 'ai-startup-lab', category: 'container', isReportable: false },
   { pageKey: 'ai-startup-lab-2027', name: '2027', parent: 'ai-startup-lab', category: 'container', isReportable: false },
   { pageKey: 'ai-startup-lab-2028', name: '2028', parent: 'ai-startup-lab', category: 'container', isReportable: false },
 
   { pageKey: 'portfolio', name: 'Portfolio', category: 'portfolio',
-    metricKeys: ['enterprises_total', 'amount_invested', 'jobs_created'] },
+    description: 'Every venture MEST has invested in since inception, and what has been committed and paid out to them.',
+    metricKeys: ['enterprises_total', 'amount_invested', 'investment_promised', 'jobs_created'],
+    headlineMetricKeys: ['enterprises_total', 'investment_promised', 'amount_invested', 'jobs_created'] },
 
-  { pageKey: 'mest-x', name: 'MEST X', category: 'container', isReportable: false },
+  /**
+   * The five figures MEST X leads with.
+   *
+   * A roll-up page shows whatever its children recorded, and between them the
+   * programmes under MEST X report thirty-odd metrics — a card row that long
+   * is a list, not a headline. Naming them here narrows the cards to these
+   * five; everything else stays exactly where it was recorded, on the
+   * programme page that holds it.
+   *
+   * This only narrows a page that rolls its figures up from below. A
+   * programme holding its own facts shows all of them, listed here or not:
+   * hiding part of what a page actually recorded would be a different thing
+   * entirely.
+   */
+  { pageKey: 'mest-x', name: 'MEST X', category: 'container', isReportable: false,
+    headlineMetricKeys: ['enterprises_total', 'jobs_created', 'educators_trained', 'partnerships', 'revenue'],
+    description: 'Scaling impact through partnerships. A suite of collaborative programmes delivered with global partners to expand access to digital skills, entrepreneurial training and startup acceleration across Africa.' },
 
   { pageKey: 'digital-skills', name: 'Digital Skills', parent: 'mest-x', category: 'container', isReportable: false },
   { pageKey: 'digital-skills-web3', name: 'Web3', parent: 'digital-skills', category: 'digital_skills',
     metricKeys: ['learners_total'], allowsManualEntry: false },
   { pageKey: 'digital-skills-pre-mest', name: 'Pre-Mest', parent: 'digital-skills', category: 'digital_skills',
-    metricKeys: ['learners_total', 'graduates', 'graduation_rate'], allowsManualEntry: false },
-  { pageKey: 'digital-skills-grow', name: 'Grow', parent: 'digital-skills', category: 'digital_skills',
+    metricKeys: ['learners_total', 'graduates', 'graduation_rate'], allowsManualEntry: false,
+    description: 'Over 800 young people trained in web development and digital marketing across six regions of Ghana, half of them women. More than 750 secured dignified work, and some went on to MEST’s flagship programme.' },
+  { pageKey: 'digital-skills-grow', name: 'GROW', parent: 'digital-skills', category: 'digital_skills',
+    description: 'Ghana Remote and Online Work. Digital skills training for young people, mostly young women, run with Generation, the Mastercard Foundation and Soronko Academy.',
     // `graduates` sits beside `graduates_employed` because the cohort entry form
     // records a plain graduate count, which the summary sheet never stated.
     metricKeys: ['learners_total', 'mothers', 'graduates', 'graduates_employed'] },
@@ -45,39 +83,62 @@ const programs = [
   { pageKey: 'digital-skills-hospitality', name: 'Hospitality', parent: 'digital-skills', category: 'digital_skills',
     metricKeys: ['learners_total', 'graduates_employed'], allowsManualEntry: false,
     description: 'Hospitality and tourism training. Figures are counted from the applicant roster, which states no totals of its own.' },
-  { pageKey: 'digital-skills-doulogic', name: 'Doulogic', parent: 'digital-skills', category: 'digital_skills',
+  // The page key stays `digital-skills-doulogic`: it is the address the URL and
+  // every recorded figure's provenance point at, and the programme was seeded
+  // under the old misspelling.
+  { pageKey: 'digital-skills-doulogic', name: 'DIGILOGIC', parent: 'digital-skills', category: 'digital_skills',
     metricKeys: ['learners_total'], allowsManualEntry: false,
-    description: 'Doulogic cohort. The roster and the tally block in the source sheet disagree — see Data quality.' },
+    description: 'An EU-funded initiative connecting African and European startups and SMEs to co-create smart logistics solutions, built around ecosystem collaboration and cross-border innovation. The roster and the tally block in the source sheet disagree, so see Data quality.' },
 
-  { pageKey: 'venture-support', name: 'Venture Support', parent: 'mest-x', category: 'container', isReportable: false },
-  { pageKey: 'venture-support-early-stage', name: 'Early stage', parent: 'venture-support', category: 'container', isReportable: false },
+  { pageKey: 'venture-support', name: 'Venture Support', parent: 'mest-x', category: 'container', isReportable: false,
+    headlineMetricKeys: VENTURE_SUPPORT_CARDS },
+  { pageKey: 'venture-support-early-stage', name: 'Early stage', parent: 'venture-support', category: 'container', isReportable: false,
+    headlineMetricKeys: VENTURE_SUPPORT_CARDS },
   { pageKey: 'venture-support-usl', name: 'USL', parent: 'venture-support-early-stage', category: 'venture_support',
-    metricKeys: ['enterprises_total'] },
+    metricKeys: ['enterprises_total'], headlineMetricKeys: VENTURE_SUPPORT_CARDS },
   { pageKey: 'venture-support-pre-mest', name: 'Pre Mest', parent: 'venture-support-early-stage', category: 'venture_support',
     metricKeys: ['enterprises_total'], isArchived: true },
   { pageKey: 'venture-support-undp', name: 'UNDP-YAI', parent: 'venture-support-early-stage', category: 'venture_support',
-    metricKeys: ['enterprises_total'] },
+    metricKeys: ['enterprises_total'], headlineMetricKeys: VENTURE_SUPPORT_CARDS,
+    description: 'Young Africa Innovates, a UNDP and Mastercard Foundation initiative implemented with MEST. It finds and grows innovations from young people to create jobs and strengthen Ghana’s innovation ecosystem, focusing on underrepresented innovators: rural youth, women and people with disabilities.' },
   // The page key stays `venture-support-absa`: it is the address the connected
   // Absa sheet, the URL and every recorded figure's provenance point at.
-  { pageKey: 'venture-support-absa', name: 'Females supported by MEST', navLabel: 'Absa partnership program',
+  //
+  // Titled by the partnership everyone knows it by, with what it reports —
+  // females supported by MEST — read underneath.
+  { pageKey: 'venture-support-absa', name: 'Absa partnership program',
     parent: 'venture-support-early-stage', category: 'venture_support',
-    metricKeys: ['enterprises_total'] },
+    metricKeys: ['enterprises_total'], headlineMetricKeys: VENTURE_SUPPORT_CARDS,
+    description: 'Females supported by MEST. Workshops that help informal businesses and SMEs refine their operations, improve performance and adopt digital solutions suited to their needs.' },
   { pageKey: 'venture-support-mest-express', name: 'MEST Express', parent: 'venture-support-early-stage', category: 'venture_support',
-    metricKeys: ['enterprises_total', 'jobs_created'],
-    description: 'The 88 enterprises in the MEST Express cohort. Four later transitioned into MEST Scale and appear in both rosters.' },
-  { pageKey: 'venture-support-grow-stage', name: 'Growth stage', parent: 'venture-support', category: 'container', isReportable: false },
+    metricKeys: ['enterprises_total', 'jobs_created'], headlineMetricKeys: VENTURE_SUPPORT_CARDS,
+    description: 'A practical accelerator for early and growth-stage Ghanaian startups, run with the Mastercard Foundation: mentorship, business strategy and equity-free funding. Four of the 88 enterprises later transitioned into MEST Scale and appear in both rosters.' },
+  { pageKey: 'venture-support-grow-stage', name: 'Growth stage', parent: 'venture-support', category: 'container', isReportable: false,
+    headlineMetricKeys: VENTURE_SUPPORT_CARDS },
+  /**
+   * The ten Venture Support figures, and the six the fellowship reports that
+   * no other programme does. Its page shows the first ten as the row every
+   * Venture Support page carries, and reads the rest into panels of its own.
+   */
   { pageKey: 'venture-support-edtech-fellowship', name: 'EdTech fellowship', parent: 'venture-support-grow-stage', category: 'venture_support',
-    metricKeys: ['enterprises_total'] },
+    metricKeys: ['enterprises_total'],
+    headlineMetricKeys: [
+      ...VENTURE_SUPPORT_CARDS,
+      'active_users', 'active_learners', 'learners_outcomes', 'educators_using_edtech',
+      'enterprises_youth_led',
+    ],
+    description: 'The Mastercard Foundation EdTech Fellowship, an acceleration programme for promising African EdTech ventures. It gives them business and financial support alongside grounding in the science of learning, to prepare them for scale and sustainability.' },
   { pageKey: 'venture-support-mest-scale', name: 'MEST Scale', parent: 'venture-support-grow-stage', category: 'venture_support',
-    metricKeys: ['enterprises_total', 'jobs_created'],
-    description: 'The 24 enterprises in the MEST Scale cohort, counted from the partner roster.' },
+    metricKeys: ['enterprises_total', 'jobs_created'], headlineMetricKeys: VENTURE_SUPPORT_CARDS,
+    description: 'A scale-up accelerator for later-stage tech companies and SMEs in Ghana, covering strategic growth planning, operational optimisation and capital readiness. The 24 enterprises here are counted from the partner roster.' },
 
   { pageKey: 'ecosystem', name: 'Ecosystem', parent: 'mest-x', category: 'container', isReportable: false },
   { pageKey: 'ecosystem-edtech-mondays', name: 'EdTech Mondays', parent: 'ecosystem', category: 'ecosystem',
     metricKeys: [
       'posts', 'impressions', 'reach', 'engagement', 'reactions', 'comments',
       'shares', 'clicks', 'video_views', 'article_reach',
-    ], allowsManualEntry: false },
+    ], allowsManualEntry: false,
+    description: 'A monthly programme exploring and promoting educational technology in Ghana. It is a platform for educators, EdTech enthusiasts and stakeholders to exchange ideas and collaborate on bringing technology into teaching and learning.' },
   { pageKey: 'ecosystem-edtech-mondays-2026', name: '2026', parent: 'ecosystem-edtech-mondays', category: 'container', isReportable: false },
   { pageKey: 'ecosystem-edtech-mondays-2027', name: '2027', parent: 'ecosystem-edtech-mondays', category: 'container', isReportable: false },
   { pageKey: 'ecosystem-edtech-mondays-2028', name: '2028', parent: 'ecosystem-edtech-mondays', category: 'container', isReportable: false },
@@ -95,6 +156,23 @@ const SOCIAL_DIMS = ['platform', 'channel', 'post_type'];
  */
 const metrics = [
   // ---- People -------------------------------------------------------------
+  /**
+   * A placeholder headcount, typed in rather than imported.
+   *
+   * The AI Startup Lab sheet states satisfaction and skill confidence but no
+   * roster, so nothing on it says how many people the programme trained. This
+   * is deliberately NOT `learners_total`: that metric carries
+   * `rollsUpToOrgTotal`, and a stand-in figure must not reach the
+   * organisation's headline count of people trained. Point the page at
+   * `learners_total` once a real roster is connected, and retire this.
+   */
+  {
+    key: 'people_trained', displayOrder: 9, label: 'The number of people trained', category: 'people',
+    unit: 'count', aggregation: 'sum',
+    description: 'How many people the programme trained. A placeholder on the AI Startup Lab until its roster is connected.',
+    allowedDimensions: ['gender', 'cohort', 'discipline'],
+    aliases: ['People trained', 'Number of people trained'],
+  },
   {
     key: 'learners_total', displayOrder: 10, label: 'Learners trained', category: 'people',
     unit: 'count', aggregation: 'sum', rollsUpToOrgTotal: true,
@@ -115,8 +193,13 @@ const metrics = [
     allowedDimensions: PEOPLE_DIMS,
     aliases: ['Graduated', 'Graduates'],
   },
+  // Called "Jobs created" on the Digital Skills pages, which is how the
+  // programmes there report it. The key stays `graduates_employed`: it is the
+  // coordinate every recorded figure and every sheet mapping points at, and it
+  // keeps this apart from `jobs_created`, which counts jobs inside the
+  // enterprises Venture Support backs rather than graduates finding work.
   {
-    key: 'graduates_employed', displayOrder: 30, label: 'Graduates employed', category: 'people',
+    key: 'graduates_employed', displayOrder: 30, label: 'Jobs created', category: 'people',
     unit: 'count', aggregation: 'sum', rollsUpToOrgTotal: true,
     allowedDimensions: PEOPLE_DIMS,
     aliases: ['Graduate employed(Freelance or Full-time)', 'Total Graduate employed(Freelance or Full-time)',
@@ -129,14 +212,61 @@ const metrics = [
     aliases: ['Graduation rate'],
   },
 
+  /**
+   * Reached, and still there.
+   *
+   * The Fellowship reports every audience twice: everyone it has ever reached,
+   * and how many of them were active. Kept as separate metrics rather than as
+   * one metric split by a status axis, because the two are not parts of a
+   * whole that add up — the active are a subset of the reached, and a chart
+   * that stacked them would claim an audience half as large again as the one
+   * the sheet reports.
+   */
+  {
+    key: 'active_users', displayOrder: 97.5, label: 'Active users', category: 'people',
+    unit: 'count', aggregation: 'sum',
+    description: 'Users still active, of everyone the solutions have reached.',
+    allowedDimensions: ['gender', 'inclusion', 'cohort'],
+    aliases: ['Total Number of active users'],
+  },
+  {
+    key: 'active_learners', displayOrder: 95.5, label: 'Active learners', category: 'people',
+    unit: 'count', aggregation: 'sum',
+    description: 'Learners still active, of everyone the solutions have reached.',
+    allowedDimensions: ['gender', 'inclusion', 'cohort'],
+    aliases: ['Total Number of active learners'],
+  },
+  {
+    key: 'learners_outcomes', displayOrder: 95.6, label: 'Learners achieving outcomes', category: 'people',
+    unit: 'count', aggregation: 'sum',
+    description: 'Learners with evidence of a learning or skills outcome, as the fellowship reports it.',
+    allowedDimensions: ['gender', 'inclusion', 'cohort'],
+    aliases: ['Learners who have achieved learning outcomes'],
+  },
+  {
+    key: 'educators_using_edtech', displayOrder: 96.5, label: 'Educators using EdTech', category: 'people',
+    unit: 'count', aggregation: 'sum',
+    description: 'Educators using an EdTech solution, which is more than the number trained on one.',
+    allowedDimensions: ['gender', 'inclusion', 'cohort'],
+    aliases: ['Educators (teachers) using EdTech solutions'],
+  },
+
   // ---- Enterprise ---------------------------------------------------------
   {
     key: 'enterprises_total', displayOrder: 60, label: 'Enterprises supported', category: 'enterprise',
     unit: 'count', aggregation: 'sum', rollsUpToOrgTotal: true,
     headlineOrder: 2, headlineLabel: 'Total no. of businesses supported',
     allowedDimensions: ['gender', 'enterprise_stage', 'region', 'district', 'sector',
-      'hub', 'cohort', 'venture_stage', 'venture_status', 'program_stage', 'open_source'],
+      'hub', 'cohort', 'venture_stage', 'venture_status', 'program_stage', 'open_source', 'company'],
     aliases: ['Total Enterprises', 'Enterprises', 'Businesses supported', 'Total Startups', 'Total startups', 'Total Companies'],
+  },
+
+  {
+    key: 'enterprises_youth_led', displayOrder: 61, label: 'Youth-led ventures', category: 'enterprise',
+    unit: 'count', aggregation: 'sum',
+    description: 'Ventures led by someone aged 18 to 35, counted among the enterprises supported rather than beside them.',
+    allowedDimensions: ['cohort', 'gender', 'region', 'sector'],
+    aliases: ['Total Youth Led', 'Youth led', 'Youth-led companies'],
   },
 
   // ---- Investment ---------------------------------------------------------
@@ -153,15 +283,32 @@ const metrics = [
     headlineOrder: 4, headlineLabel: 'Learners impacted with EdTech solutions',
     description:
       'End learners reached by EdTech products built or supported by MEST ventures. Distinct from people trained — these are the users of the solutions, not participants in a programme.',
-    allowedDimensions: ['region', 'gender', 'cohort'],
+    allowedDimensions: ['region', 'gender', 'inclusion', 'cohort'],
     aliases: ['Learners impacted', 'EdTech learners', 'Learners reached', 'Total Number of learners'],
   },
   {
     key: 'amount_invested', displayOrder: 80, label: 'Amount invested', category: 'investment',
     unit: 'currency', aggregation: 'sum', currency: 'USD', rollsUpToOrgTotal: true,
     headlineOrder: 5, headlineLabel: 'Amount invested',
-    allowedDimensions: ['sector', 'region'],
-    aliases: ['Amount invested', 'Capital deployed', 'Investment'],
+    description: 'Money actually disbursed to the ventures, which is less than what was promised.',
+    allowedDimensions: ['sector', 'region', 'venture_status', 'company'],
+    aliases: ['Amount invested', 'Capital deployed', 'Investment', 'Funding Disbursed'],
+  },
+  /**
+   * Committed, as against paid out.
+   *
+   * The portfolio reports both and they are far apart — $7.2m promised
+   * against $4.5m disbursed — because a commitment is drawn down in stages
+   * over the life of an investment. Kept as its own metric rather than as a
+   * status on `amount_invested`, so nothing can add a promise to a payment
+   * and call the result money invested.
+   */
+  {
+    key: 'investment_promised', displayOrder: 79, label: 'Investment promised', category: 'investment',
+    unit: 'currency', aggregation: 'sum', currency: 'USD',
+    description: 'Money committed to the ventures, whether or not it has been paid out yet.',
+    allowedDimensions: ['sector', 'region', 'venture_status', 'company'],
+    aliases: ['Investment Promised', 'Funding committed', 'Committed'],
   },
   {
     key: 'edtech_advocacy', displayOrder: 98, label: 'EdTech advocacy initiatives',
@@ -186,14 +333,14 @@ const metrics = [
     key: 'educators_trained', displayOrder: 96, label: 'Educators trained', category: 'people',
     unit: 'count', aggregation: 'sum',
     description: 'Teachers and trainers taken through an EdTech programme, as distinct from the learners they go on to reach.',
-    allowedDimensions: ['gender', 'region', 'cohort'],
+    allowedDimensions: ['gender', 'inclusion', 'region', 'cohort'],
     aliases: ['Educators (teachers) trained', 'Educators trained'],
   },
   {
     key: 'users_reached', displayOrder: 97, label: 'Users and customers reached', category: 'people',
     unit: 'count', aggregation: 'sum',
     description: 'End users of the products these ventures build. A reach figure reported by the ventures themselves, not a count MEST verified.',
-    allowedDimensions: ['gender', 'region', 'cohort'],
+    allowedDimensions: ['gender', 'inclusion', 'region', 'cohort'],
     aliases: ['Total Number of users', 'Total Users/Customers', 'Total number of users'],
   },
   {
@@ -207,7 +354,7 @@ const metrics = [
     key: 'employees_hired', displayOrder: 100, label: 'Employees hired', category: 'enterprise',
     unit: 'count', aggregation: 'sum',
     description: 'People employed by the supported ventures. Distinct from jobs created, which the partner sheets report against the venture rather than the hire.',
-    allowedDimensions: ['gender', 'employment_type', 'cohort'],
+    allowedDimensions: ['gender', 'inclusion', 'employment_type', 'cohort'],
     aliases: ['Employees hired', 'Employees Count'],
   },
   {
@@ -231,26 +378,52 @@ const metrics = [
     aliases: ['Monthly revenue (GHS)'],
   },
 
+  /**
+   * The AI Startup sheet states satisfaction three times over, under three
+   * headings of its own: General (row 4), Team (row 8) and Track (row 12).
+   *
+   * They are three questions, not one figure read three ways — January is
+   * 89.3% general against 67.9% team — so each gets its own metric. Averaging
+   * them into one "satisfaction" number would answer a question nobody asked.
+   *
+   * Only Track carries the discipline axis; the other two are one series each.
+   */
   {
-    key: 'satisfaction', displayOrder: 104, label: 'Satisfaction', category: 'people',
+    key: 'satisfaction_general', displayOrder: 104, label: 'General satisfaction', category: 'people',
     unit: 'percent', aggregation: 'avg',
-    description: 'Participant satisfaction, as reported in the monthly survey.',
+    description: 'Overall satisfaction with the programme, as reported in the monthly survey.',
+    allowedDimensions: ['cohort', 'gender'],
+    aliases: ['General Satisfaction'],
+  },
+  {
+    key: 'satisfaction_team', displayOrder: 105, label: 'Team satisfaction', category: 'people',
+    unit: 'percent', aggregation: 'avg',
+    description: 'Satisfaction with the programme team, as reported in the monthly survey.',
+    allowedDimensions: ['cohort', 'gender'],
+    aliases: ['Team Satisfaction'],
+  },
+  // The key stays `satisfaction`: it is the coordinate the discipline figures
+  // already imported are stored against.
+  {
+    key: 'satisfaction', displayOrder: 106, label: 'Track satisfaction', category: 'people',
+    unit: 'percent', aggregation: 'avg',
+    description: 'Satisfaction with the track — Tech, Business or Product — as reported in the monthly survey.',
     allowedDimensions: ['discipline', 'cohort', 'gender'],
-    aliases: ['Satisfaction', 'General Satisfaction'],
+    aliases: ['Track Satisfaction', 'Satisfaction'],
   },
   // Before and after are separate metrics rather than one metric split by an
   // assessment axis, because a headline card has to state a number somebody can
   // quote. Averaging the two into "skill confidence: 56%" describes nobody: not
   // the people who started, not the people who finished.
   {
-    key: 'skill_confidence_before', displayOrder: 105, label: 'Skill confidence — before', category: 'people',
+    key: 'skill_confidence_before', displayOrder: 107, label: 'Skill confidence — before', category: 'people',
     unit: 'percent', aggregation: 'avg',
     description: 'Self-rated confidence before the teaching, averaged across every topic assessed in a discipline.',
     allowedDimensions: ['discipline', 'cohort'],
     aliases: ['Skill confidence before', 'Confidence before', 'BEFORE'],
   },
   {
-    key: 'skill_confidence_after', displayOrder: 106, label: 'Skill confidence — after', category: 'people',
+    key: 'skill_confidence_after', displayOrder: 108, label: 'Skill confidence — after', category: 'people',
     unit: 'percent', aggregation: 'avg',
     description: 'Self-rated confidence after the teaching, averaged across every topic assessed in a discipline.',
     allowedDimensions: ['discipline', 'cohort'],
@@ -334,7 +507,9 @@ const dimensions = [
     values: [
       { value: 'male', label: 'Male', aliases: ['Males', 'M'], order: 1 },
       { value: 'female', label: 'Female', aliases: ['Females', 'F', 'Women', 'Woman'], order: 2 },
-      { value: 'undisclosed', label: 'Prefer not to disclose', aliases: ['Prefer not to disclose', 'Not disclosed'], order: 3 },
+      // The aliases keep both of the sheets' own spellings matchable, whatever
+      // the dashboard chooses to call it.
+      { value: 'undisclosed', label: 'Not disclose', aliases: ['Prefer not to disclose', 'Not disclosed'], order: 3 },
     ],
   },
   {
@@ -431,6 +606,20 @@ const dimensions = [
       { value: 'unknown', label: 'Information not available', aliases: ['Information Not Available'], order: 99 },
     ],
   },
+  /**
+   * A named venture.
+   *
+   * Open, like district and hub: the portfolio's ninety-eight names are not a
+   * list the catalog can hold and keep current, and new ones arrive with every
+   * cohort. Values are created from the sheet as it is read.
+   *
+   * Not an axis to chart. Ninety-eight bars of one enterprise each says
+   * nothing; it is here so a page can show the portfolio as a roster and so a
+   * figure can be attributed to the venture that reported it.
+   */
+  {
+    name: 'company', label: 'Company', values: [],
+  },
   {
     name: 'district', label: 'District', values: [],
   },
@@ -486,6 +675,29 @@ const dimensions = [
       { value: 'yes', label: 'Open source', aliases: ['Yes'], order: 1 },
       { value: 'no', label: 'Proprietary', aliases: ['No'], order: 2 },
       { value: 'unknown', label: 'Not recorded', aliases: ['N/A'], order: 99 },
+    ],
+  },
+  /**
+   * Who a figure reached, beyond how many.
+   *
+   * The Fellowship counts its learners, users and educators several ways over:
+   * how many were in rural areas, how many are displaced or refugees, how many
+   * live with a disability. These overlap each other and overlap gender — a
+   * learner can be counted as female and as rural — so they are their own axis
+   * rather than values of one. Facts land on their own signature and are never
+   * added to the gender split or to each other.
+   */
+  {
+    name: 'inclusion', label: 'Inclusion group', isClosed: true,
+    values: [
+      { value: 'rural', label: 'Rural areas', order: 1,
+        aliases: ['Number in rural areas', 'Rural', 'Rural Learners'] },
+      { value: 'pwd', label: 'Living with a disability', order: 2,
+        aliases: ['Number who are PWD', 'PWD', 'Learners with Disabilities'] },
+      { value: 'displaced', label: 'Displaced or refugee', order: 3,
+        aliases: ['Number who are displaced refugees', 'Number who are displaced/refugees', 'RDP'] },
+      { value: 'youth', label: 'Youth (18–35)', order: 4,
+        aliases: ['Number between the ages of 18-35', 'Youth'] },
     ],
   },
   {

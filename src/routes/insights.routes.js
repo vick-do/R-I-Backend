@@ -2,7 +2,9 @@ const { Router } = require('express');
 const { query } = require('express-validator');
 const { validate } = require('../middleware/validate');
 const { authenticate, optionalAuthenticate } = require('../middleware/authenticate');
-const { getScorecard, getCompare, getFunnel, getDataQuality, getByYear } = require('../controllers/insights.controller');
+const {
+  getScorecard, getCompare, getFunnel, getDataQuality, getByYear, getTargets,
+} = require('../controllers/insights.controller');
 
 const router = Router();
 
@@ -34,5 +36,8 @@ router.get(
   validate,
   getByYear
 );
+
+// A programme's targets are part of its public record, like its figures.
+router.get('/targets', optionalAuthenticate, query('program').isString().notEmpty(), validate, getTargets);
 
 module.exports = router;

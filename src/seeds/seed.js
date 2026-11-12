@@ -39,6 +39,7 @@ async function seedPrograms() {
       order: index,
       category: spec.category ?? 'container',
       metricKeys: spec.metricKeys ?? [],
+      headlineMetricKeys: spec.headlineMetricKeys ?? [],
       description: spec.description ?? null,
       navLabel: spec.navLabel ?? null,
       isReportable: spec.isReportable ?? true,

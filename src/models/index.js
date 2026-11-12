@@ -11,6 +11,7 @@ module.exports = {
   Metric: require('./Metric.model'),
   Dimension: require('./Dimension.model'),
   Fact: require('./Fact.model'),
+  Target: require('./Target.model'),
   ImportBatch: require('./ImportBatch.model'),
   MappingTemplate: require('./MappingTemplate.model'),
   SheetSource: require('./SheetSource.model'),

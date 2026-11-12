@@ -1,6 +1,7 @@
 const Metric = require('../models/Metric.model');
 const Program = require('../models/Program.model');
 const Fact = require('../models/Fact.model');
+const Target = require('../models/Target.model');
 const { orgFigures, periodFilter, resolveTotalCore, resolveProgramIds } = require('./facts.service');
 const { signatureKey, slugifyName } = require('../utils/dimensions');
 const { memo } = require('../utils/memo');
@@ -217,6 +218,18 @@ async function compare({ metricKey, year, from, to, groupBy = null }) {
  */
 const FUNNEL_STAGES = ['learners_total', 'graduates', 'graduates_employed'];
 
+/**
+ * Wording for a stage whose metric label does not fit the funnel.
+ *
+ * `graduates_employed` is labelled "Jobs created" for the Digital Skills
+ * pages. Here it is the last step of one group of people moving through
+ * training, and the percentage beside it is the share of graduates who found
+ * work — so the stage keeps the wording that describes the people. A funnel
+ * reading "Learners trained → Graduates → Jobs created" would be counting two
+ * different things and calling the ratio a conversion rate.
+ */
+const STAGE_LABELS = { graduates_employed: 'Graduates employed' };
+
 async function funnel({ year, from, to } = {}) {
   const found = await Metric.find({ key: { $in: FUNNEL_STAGES }, isArchived: false });
   const ordered = FUNNEL_STAGES.map((key) => found.find((m) => m.key === key)).filter(Boolean);
@@ -234,7 +247,7 @@ async function funnel({ year, from, to } = {}) {
 
     return {
       key: metric.key,
-      label: metric.label,
+      label: STAGE_LABELS[metric.key] ?? metric.label,
       unit: metric.unit,
       value,
       programCount: figure.contributions.length,
@@ -274,4 +287,67 @@ async function byYear({ programId, metricKey, includeDescendants = false }) {
   return { metric: { key: metric.key, label: metric.label, unit: metric.unit }, points };
 }
 
-module.exports = { scorecard, compare, funnel, byYear, yearsWithData };
+/**
+ * What a programme committed to, beside what it has done.
+ *
+ * The actual is computed from the facts rather than read from the target row,
+ * even where the source states one. They are not always the same: the
+ * Fellowship sheet states 16,684 learners with disabilities against its
+ * target, which is its own active-learner figure rather than its learner one.
+ * Both are returned — `actual` from the facts, `statedActual` as the source
+ * wrote it — so a page can show the disagreement instead of picking a side.
+ *
+ * Matched on the exact coordinate: same metric, same period, same dimensions.
+ * A target for rural learners is answered by the rural learner fact and by
+ * nothing else, which is the same rule every aggregation in the system follows.
+ */
+async function targets({ programId }) {
+  const rows = await Target.find({ program: programId })
+    .populate('metric', 'key label unit currency')
+    .sort({ periodStart: 1, value: -1 })
+    .lean();
+
+  if (rows.length === 0) return { targets: [] };
+
+  const facts = await Fact.find({
+    program: programId,
+    isCurrent: true,
+    metric: { $in: [...new Set(rows.map((r) => String(r.metric._id)))] },
+  })
+    .select('metric periodType periodStart dimensionKey value')
+    .lean();
+
+  const at = (metric, periodType, periodStart, dimensionKey) =>
+    `${metric}|${periodType}|${periodStart ? new Date(periodStart).toISOString() : 'null'}|${dimensionKey}`;
+
+  const actuals = new Map();
+  for (const fact of facts) {
+    const key = at(fact.metric, fact.periodType, fact.periodStart, fact.dimensionKey ?? '');
+    actuals.set(key, (actuals.get(key) ?? 0) + fact.value);
+  }
+
+  return {
+    targets: rows.map((row) => {
+      const actual = actuals.get(
+        at(row.metric._id, row.periodType, row.periodStart, row.dimensionKey ?? '')
+      );
+
+      return {
+        label: row.label ?? row.metric.label,
+        metricKey: row.metric.key,
+        metricLabel: row.metric.label,
+        unit: row.metric.unit,
+        currency: row.metric.currency ?? null,
+        periodLabel: row.periodLabel,
+        year: row.year ?? null,
+        dimensions: row.dimensions ?? {},
+        target: row.value,
+        actual: actual ?? null,
+        statedActual: row.statedActual ?? null,
+        sourceRef: row.sourceRef ?? null,
+      };
+    }),
+  };
+}
+
+module.exports = { scorecard, compare, funnel, byYear, yearsWithData, targets };

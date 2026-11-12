@@ -3,12 +3,19 @@
  *
  *   node scripts/connect-ai-startup.js [--dry-run]
  *
- * Two things are read from it.
+ * Three things are read from it.
  *
- * Satisfaction by discipline, monthly — a cross-tab with the months across
- * row 13 and Tech / Business / Product down column C. July onward is blank
- * because the cohort is still running, and blank months are simply absent
- * rather than recorded as zero.
+ * Satisfaction, monthly, three times over. The sheet asks three separate
+ * questions under three headings of its own: General Satisfaction (row 4),
+ * Team Satisfaction (row 8) and Track Satisfaction (row 12). The first two are
+ * a single series each, on rows 6 and 10; the third is a cross-tab with the
+ * months across row 13 and Tech / Business / Product down column C. July
+ * onward is blank on all three because the cohort is still running, and blank
+ * months are simply absent rather than recorded as zero.
+ *
+ * The General and Team rows are both labelled plainly "Satisfaction" in column
+ * C, so they are read with `labelRole: 'none'` and a fixed metric: what tells
+ * them apart is the heading two rows above, which no row label repeats.
  *
  * Skill confidence, before and after — six "Learning Impact Summary" blocks
  * laid out three across and two down. Each rates a list of topics from 0 to 1,
@@ -21,12 +28,11 @@
  * are free text that changes between blocks, and "Designing a Grounded Answer
  * Layout" is not an axis anything else in the system shares.
  *
- * NOT imported, and needing a decision: rows 6 and 10 hold two more monthly
- * satisfaction series, both under the heading "General Satisfaction" and
- * neither otherwise labelled. They disagree — January reads 0.8929 on one and
- * 0.6786 on the other — so they measure different things, and nothing on the
- * sheet says which is which. Importing one as "satisfaction" would be picking a
- * number out of two with no reason to prefer it.
+ * Previously open, now settled: rows 6 and 10 used to sit under one repeated
+ * "General Satisfaction" heading with nothing to tell them apart, and they
+ * disagree — January reads 0.8929 on one and 0.6786 on the other. The sheet has
+ * since been given its own headings for them, so they are no longer a guess:
+ * the 0.8929 series is General and the 0.6786 series is Team.
  */
 require('../src/config/env');
 const mongoose = require('mongoose');
@@ -89,9 +95,38 @@ const confidence = ({ rows: [first, last], discipline, before, after }, index) =
     },
   }));
 
+/**
+ * The two single-row satisfaction series, each under its own heading.
+ *
+ * Same shape as the track cross-tab below — months across, one row of figures
+ * — except that the row is the whole block, so there is no axis to put on it.
+ */
+const SINGLE_SERIES = [
+  { name: 'General satisfaction, monthly', metric: 'satisfaction_general', heading: 4 },
+  { name: 'Team satisfaction, monthly', metric: 'satisfaction_team', heading: 8 },
+];
+
+const series = ({ name, metric, heading }) => ({
+  name,
+  mapping: {
+    layout: 'crosstab',
+    percentScale: 'fraction',
+    crosstab: {
+      // The heading, then the month header, then the figures.
+      headerRow: heading + 1, labelColumn: 'C',
+      firstDataRow: heading + 2, lastDataRow: heading + 2,
+      firstDataColumn: 'D', lastDataColumn: 'O',
+      headerRole: 'period', defaultYear: YEAR,
+      // Both rows read "Satisfaction", so the label decides nothing.
+      labelRole: 'none', metric,
+    },
+  },
+});
+
 const BLOCKS = [
+  ...SINGLE_SERIES.map(series),
   {
-    name: 'Satisfaction by discipline, monthly',
+    name: 'Satisfaction by track, monthly',
     mapping: {
       layout: 'crosstab',
       percentScale: 'fraction',
@@ -101,7 +136,8 @@ const BLOCKS = [
         firstDataColumn: 'D', lastDataColumn: 'O',
         headerRole: 'period', defaultYear: YEAR,
         // The rows are disciplines rather than metrics, so the metric is fixed
-        // for the block and the row label becomes the axis.
+        // for the block and the row label becomes the axis. This is the sheet's
+        // "Track Satisfaction", which `satisfaction` is now labelled as.
         labelRole: 'dimension', labelDimension: 'discipline', metric: 'satisfaction',
       },
     },
@@ -110,7 +146,9 @@ const BLOCKS = [
 ];
 
 const ANCHORS = [
-  ['C12', 'General Satisfaction'], ['C13', 'Month'], ['D13', 'January'],
+  ['C4', 'General Satisfaction'], ['C5', 'Month'], ['D5', 'January'],
+  ['C8', 'Team Satisfaction'], ['C9', 'Month'], ['D9', 'January'],
+  ['C12', 'Track Satisfaction'], ['C13', 'Month'], ['D13', 'January'],
   ['C14', 'Tech'], ['C15', 'Business'], ['C16', 'Product/Design'],
   ['C22', 'Learning Impact Summary'], ['C24', 'Tech'], ['E23', 'BEFORE'], ['F23', 'AFTER'],
   ['K22', 'Learning Impact Summary'], ['S22', 'Learning Impact Summary'],

@@ -4,6 +4,7 @@ const Dimension = require('../models/Dimension.model');
 const Fact = require('../models/Fact.model');
 const facts = require('../services/facts.service');
 const sheetSync = require('../services/sheetSync.service');
+const catalog = require('../services/catalog.cache');
 const SheetSource = require('../models/SheetSource.model');
 const submissions = require('../services/submissions.service');
 const { sendSuccess, sendError, ERROR_CODES } = require('../utils/response');
@@ -178,6 +179,25 @@ async function getSummary(req, res, next) {
       liveStatus(programIds, refresh),
     ]);
 
+    /**
+     * A page may name the figures it leads with, in place of showing a card
+     * for whatever happens to have been recorded under it.
+     *
+     * Two problems, one answer. A roll-up covering five programmes was showing
+     * two dozen cards, which is a list rather than a headline. And sibling
+     * programmes showed different cards from each other, so moving between
+     * them meant re-reading the row each time to see what was there.
+     *
+     * Named, the page shows exactly those, in catalog order, and a figure with
+     * nothing recorded still gets its card — empty. "Not reported" is a fact
+     * about the programme and worth showing; a card that silently disappears
+     * says nothing at all, and says it differently on every page.
+     *
+     * Nothing is hidden that a reader cannot reach: a figure left off the list
+     * is still on the programme page that recorded it.
+     */
+    const headline = await leadWith(program, summary.metrics);
+
     sendSuccess(res, 200, {
       data: {
         program: {
@@ -192,13 +212,51 @@ async function getSummary(req, res, next) {
         rolledUp: includeDescendants,
         // A year page reports one year, so the period control offers only it.
         availableYears: yearNode ? [yearNode.year] : years,
-        metrics: summary.metrics,
+        metrics: headline,
         live,
       },
     });
   } catch (err) {
     next(err);
   }
+}
+
+/**
+ * An empty card: the figure is expected here and has not been reported.
+ *
+ * Shaped exactly like a computed one so the page needs no second branch for
+ * it — `total: null` is what every card already renders as a dash.
+ */
+function blankFigure(metric) {
+  return {
+    key: metric.key,
+    label: metric.label,
+    unit: metric.unit,
+    currency: metric.currency ?? null,
+    aggregation: metric.aggregation,
+    category: metric.category,
+    total: null,
+    basis: 'no_data',
+    derivedFrom: null,
+    programCount: 0,
+    breakdowns: [],
+    trend: null,
+  };
+}
+
+/** The cards a page shows, when it names them. */
+async function leadWith(program, computed) {
+  const named = program.headlineMetricKeys ?? [];
+  if (named.length === 0) return computed;
+
+  const byKey = new Map(computed.map((m) => [m.key, m]));
+  const wanted = new Set(named);
+
+  // Read from the catalog rather than from the list itself, so the row stays
+  // in displayOrder — the order every other card row on the dashboard uses.
+  return (await catalog.metrics())
+    .filter((metric) => wanted.has(metric.key))
+    .map((metric) => byKey.get(metric.key) ?? blankFigure(metric));
 }
 
 /** GET /api/v1/facts/history — every version behind one number. */

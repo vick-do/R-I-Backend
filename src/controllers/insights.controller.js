@@ -73,4 +73,20 @@ async function getByYear(req, res, next) {
   }
 }
 
-module.exports = { getScorecard, getCompare, getFunnel, getDataQuality, getByYear };
+/** GET /api/v1/insights/targets — what a programme aimed for, beside what it did. */
+async function getTargets(req, res, next) {
+  try {
+    const program = await Program.findOne({ pageKey: req.query.program });
+    if (!program) {
+      sendError(res, 404, { code: ERROR_CODES.NOT_FOUND, message: 'Program not found.' });
+      return;
+    }
+
+    const data = await insights.targets({ programId: program._id });
+    sendSuccess(res, 200, { data });
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = { getScorecard, getCompare, getFunnel, getDataQuality, getByYear, getTargets };

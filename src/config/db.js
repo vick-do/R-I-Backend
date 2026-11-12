@@ -34,7 +34,28 @@ async function connectDB() {
     logger.error('MongoDB error', { error: err.message });
   });
 
-  await mongoose.connect(env.MONGODB_URI, CONNECTION_OPTIONS);
+  /**
+   * Mongoose reconnects on its own after a connection that once succeeded drops,
+   * but it does not retry the *initial* connect — that promise rejects and the
+   * connection stays down until the process restarts. One reset during startup
+   * would otherwise strand the API on 503 forever.
+   */
+  const CONNECT_RETRIES = 5;
+
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await mongoose.connect(env.MONGODB_URI, CONNECTION_OPTIONS);
+      break;
+    } catch (err) {
+      if (attempt > CONNECT_RETRIES) throw err;
+
+      const delay = Math.min(1000 * 2 ** (attempt - 1), 10000);
+      logger.warn(`MongoDB connect attempt ${attempt} failed, retrying in ${delay}ms`, {
+        error: err.message,
+      });
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
 
   // The database name is the useful part — it says whether this is dev or
   // production. The host list, replica set and connection options are not worth
